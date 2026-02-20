@@ -1,7 +1,6 @@
 import * as fs from "node:fs/promises";
 import { resolvePatchPath } from "./path-utils.js";
-import { computeLineHash } from "../shared/hash.js";
-import { normalizeForHash } from "../shared/normalize.js";
+import { normalizeLine } from "../shared/normalize.js";
 import { InvalidHunkError } from "./types.js";
 
 function extractInvalidLine(message: string): string | undefined {
@@ -26,7 +25,7 @@ function anchoredWindow(lines: string[], center: number): string[] {
   const out: string[] = [];
   let index = start;
   while (index < stop) {
-    out.push(`${index + 1}:${computeLineHash(lines[index])}|${lines[index]}`);
+    out.push(`${index + 1}|${lines[index]}`);
     index += 1;
   }
   return out;
@@ -34,9 +33,9 @@ function anchoredWindow(lines: string[], center: number): string[] {
 
 function findLine(lines: string[], target: string): number {
   let index = 0;
-  const normalized = normalizeForHash(target, false);
+  const normalized = normalizeLine(target, false);
   while (index < lines.length) {
-    if (normalizeForHash(lines[index], false) === normalized) return index;
+    if (normalizeLine(lines[index], false) === normalized) return index;
     index += 1;
   }
   return -1;
@@ -62,12 +61,6 @@ export async function enrichParseError(cwd: string, patchText: string, error: un
   const hint = center >= 0
     ? `Use the anchored line for '${invalid}' from '${filePath}' in a ' ' or '-' line.`
     : `The invalid line text was not found exactly in '${filePath}'. Run read for a precise anchor near the target edit.`;
-  const details = [
-    error.message,
-    ``,
-    `Auto context from ${filePath}:`,
-    ...sample.map((line) => `  ${line}`),
-    `Hint: ${hint}`,
-  ];
+  const details = [error.message, ``, `Auto context from ${filePath}:`, ...sample.map((line) => `  ${line}`), `Hint: ${hint}`];
   return details.join("\n");
 }

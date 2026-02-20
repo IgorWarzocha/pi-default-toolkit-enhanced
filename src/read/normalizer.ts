@@ -1,6 +1,6 @@
-import type { HashFileInput } from "./types.js";
+import type { ReadFileInput } from "./types.js";
 
-export function normalizeInput(input: unknown): HashFileInput[] {
+export function normalizeInput(input: unknown): ReadFileInput[] {
   let normalized = input;
 
   if (typeof normalized === "string") {
@@ -17,20 +17,17 @@ export function normalizeInput(input: unknown): HashFileInput[] {
   }
 
   if (Array.isArray(normalized)) {
-    return normalized.map((f) => (typeof f === "string" ? { path: f } : f as HashFileInput));
+    return normalized.map((value) => typeof value === "string" ? { path: value } : value as ReadFileInput);
   }
 
   if (typeof normalized === "object" && normalized !== null) {
     if ("files" in normalized && Array.isArray((normalized as Record<string, unknown>).files)) {
-      return (normalized as Record<string, unknown[]>).files.map((f) =>
-        typeof f === "string" ? { path: f } : f as HashFileInput,
+      return (normalized as Record<string, unknown[]>).files.map((value) =>
+        typeof value === "string" ? { path: value } : value as ReadFileInput,
       );
     }
-    if ("path" in normalized) {
-      return [normalized as HashFileInput];
-    }
+    if ("path" in normalized) return [normalized as ReadFileInput];
   }
 
   return [];
 }
-

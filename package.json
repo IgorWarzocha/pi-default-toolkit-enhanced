@@ -1,7 +1,7 @@
 {
   "name": "@howaboua/pi-hash",
   "version": "1.0.0",
-  "description": "Hashed read and anchored apply_patch tools for Pi",
+  "description": "Line-anchored read and apply_patch tools for Pi",
   "license": "MIT",
   "keywords": [
     "pi-extension",

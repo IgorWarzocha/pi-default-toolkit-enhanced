@@ -1,5 +1,4 @@
 import type { ApplyNoop, EditFileChunk } from "./types.js";
-import { computeLineHash } from "../shared/hash.js";
 
 const CONFUSABLE_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2212\uFE63\uFF0D]/g;
 
@@ -182,13 +181,13 @@ export function computeReplacementsWithHealing(
   filePath: string,
   chunks: EditFileChunk[],
   noops: ApplyNoop[],
-  locateFn: (lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByHash: Map<string, number>) => number,
+  locateFn: (lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>) => number,
   findContextFn: (lines: string[], context: string, start: number) => number,
   contextErrorFn: (lines: string[], pathText: string, context: string, seed: number) => Error,
   mismatchFn: (lines: string[], pathText: string, chunk: EditFileChunk) => Error,
-  buildUniqueLineByHashFn: (lines: string[]) => Map<string, number>,
+  buildUniqueLineByContentFn: (lines: string[]) => Map<string, number>,
 ): ReplaceOp[] {
-  const uniqueLineByHash = buildUniqueLineByHashFn(originalLines);
+  const uniqueLineByContent = buildUniqueLineByContentFn(originalLines);
   const replacements: ReplaceOp[] = [];
   const explicitlyTouchedLines = new Set<number>();
   for (const chunk of chunks) {
@@ -211,7 +210,7 @@ healChunkOverlaps(chunk);
     }
     let start = seed;
     try {
-      start = locateFn(originalLines, chunk, seed, uniqueLineByHash);
+      start = locateFn(originalLines, chunk, seed, uniqueLineByContent);
     } catch {
       throw mismatchFn(originalLines, filePath, chunk);
     }

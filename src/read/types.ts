@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-export const HashFileSchema = Type.Object({
+export const ReadFileSchema = Type.Object({
   path: Type.String({
     description: "REQUIRED. File path to read.",
   }),
@@ -46,9 +46,9 @@ export const HashFileSchema = Type.Object({
   ),
 });
 
-export type HashFileInput = Static<typeof HashFileSchema>;
+export type ReadFileInput = Static<typeof ReadFileSchema>;
 
-export type ReadHashDetail = {
+export type ReadDetail = {
   path: string;
   offset?: number;
   limit?: number;
@@ -58,4 +58,3 @@ export type ReadHashDetail = {
   truncated?: boolean;
   error?: string;
 };
-

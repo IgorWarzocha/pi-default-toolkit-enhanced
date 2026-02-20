@@ -16,21 +16,21 @@ import { InvalidPatchError, InvalidHunkError, type Hunk, type EditFileChunk } fr
 
 function sanitizeAddedLine(line: string): string {
   let next = line;
-  while (/^\d+:[0-9a-f]{2}\|/.test(next)) {
-    next = next.replace(/^\d+:[0-9a-f]{2}\|/, "");
+  while (/^\d+\|/.test(next)) {
+    next = next.replace(/^\d+\|/, "");
   }
   return next;
 }
 
-function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number; hash: string } {
+function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number } {
   const trimmed = body.trimStart();
-  const match = trimmed.match(/^(\d+):([0-9a-f]{2})\|(.*)$/);
+  const match = trimmed.match(/^(\d+)\|(.*)$/);
   if (!match) {
     throw new InvalidHunkError(
       `INVALID ANCHOR FORMAT: '${body.slice(0, 120)}'` +
         `\n` +
-        `\nREQUIREMENT: Context (' ') and removal ('-') lines MUST include LINE:HASH| prefix.` +
-        `\nCORRECT FORMAT: '42:ab|content' where 42 is the line number and ab is the hash.` +
+        `\nREQUIREMENT: Context (' ') and removal ('-') lines MUST include LINE| prefix.` +
+        `\nCORRECT FORMAT: '42|content' where 42 is the line number.` +
         `\n` +
         `\nACTION REQUIRED:` +
         `\n1. Copy anchored lines EXACTLY from the error context above` +
@@ -49,7 +49,7 @@ function parseAnchoredBody(body: string, lineNumber: number): { line: string; li
       lineNumber,
     );
   }
-  return { line: match[3], lineNumber: rawLine, hash: match[2] };
+  return { line: match[2], lineNumber: rawLine };
 }
 
 function normalizePatchText(text: string): string {
@@ -332,7 +332,7 @@ function parseEditFileChunk(
     if (prefix === " ") {
       const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, hash: anchored.hash });
+      chunk.oldAnchors.push({ line: anchored.lineNumber });
       chunk.newLines.push(anchored.line);
       parsedBodyLines += 1;
       continue;
@@ -345,7 +345,7 @@ function parseEditFileChunk(
     if (prefix === "-") {
       const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, hash: anchored.hash });
+      chunk.oldAnchors.push({ line: anchored.lineNumber });
       parsedBodyLines += 1;
       continue;
     }
