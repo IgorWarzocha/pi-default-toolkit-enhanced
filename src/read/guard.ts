@@ -18,14 +18,28 @@ function matchesBashRead(command: string): boolean {
   return false;
 }
 
+function countFiles(value: unknown): number {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === "object" && value !== null) return 1;
+  if (typeof value !== "string") return 0;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return 0;
+  if ((trimmed.startsWith("[") || trimmed.startsWith("{"))) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed)) return parsed.length;
+      if (typeof parsed === "object" && parsed !== null) return 1;
+    } catch {
+      return 1;
+    }
+  }
+  return 1;
+}
+
 function isSingleReadInput(input: unknown): boolean {
   if (typeof input !== "object" || input === null) return false;
   const record = input as Record<string, unknown>;
-  const files = record.files;
-  if (typeof files === "string") return true;
-  if (Array.isArray(files)) return files.length === 1;
-  if (typeof files === "object" && files !== null) return true;
-  return false;
+  return countFiles(record.files) === 1;
 }
 
 export function setupReadGuard(pi: ExtensionAPI) {
