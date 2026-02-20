@@ -15,30 +15,11 @@ import { ensureRelativePatchPath } from "./path-utils.js";
 import { InvalidPatchError, InvalidHunkError, type Hunk, type EditFileChunk } from "./types.js";
 
 function sanitizeAddedLine(line: string): string {
-  let next = line;
-  while (/^\d+\|/.test(next)) {
-    next = next.replace(/^\d+\|/, "");
-  }
-  return next;
+  return line;
 }
 
-function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number } {
-  const match = body.match(/^\s*(\d+)\|(.*)$/);
-  if (!match) {
-    if (body.length === 0) {
-      return { line: "", lineNumber: 0 };
-    }
-    return { line: body, lineNumber: 0 };
-  }
-  const rawLine = Number.parseInt(match[1], 10);
-  if (!Number.isFinite(rawLine) || rawLine < 1) {
-    throw new InvalidHunkError(
-      `INVALID LINE NUMBER: '${match[1]}'` +
-        `\nLine numbers MUST be positive integers starting from 1.`,
-      lineNumber,
-    );
-  }
-  return { line: match[2], lineNumber: rawLine };
+function parseAnchoredBody(body: string): { line: string; lineNumber: number } {
+  return { line: body, lineNumber: 0 };
 }
 
 function normalizePatchText(text: string): string {
@@ -343,7 +324,7 @@ function parseEditFileChunk(
 
     const prefix = line[0];
     if (prefix === " ") {
-      const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
+      const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
       chunk.oldAnchors.push({ line: anchored.lineNumber });
       chunk.newLines.push(anchored.line);
@@ -356,7 +337,7 @@ function parseEditFileChunk(
       continue;
     }
     if (prefix === "-") {
-      const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
+      const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
       chunk.oldAnchors.push({ line: anchored.lineNumber });
       parsedBodyLines += 1;

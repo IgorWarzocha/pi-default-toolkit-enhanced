@@ -14,7 +14,7 @@ type AnchorError = Error & {
 };
 
 function sanitizeContext(context: string): string {
-  return context.replace(/^\d+\|/, "");
+  return context.replace(/^\s*\d+:\s*/, "").replace(/^\s*\d+\|/, "");
 }
 
 function prefixLine(line: number, content: string): string {
