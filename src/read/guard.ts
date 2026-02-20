@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
+import { detectBashWriteViolation } from "../bash-guard.js";
 
 const BASH_READ_PATTERNS = [
   /^(?:\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)?(?:cat|head|tail|less|more|nl)\b/,
@@ -7,6 +8,7 @@ const BASH_READ_PATTERNS = [
 ];
 
 const BASH_NUDGE = "Note: You SHOULD use read for file inspection because it provides multi-file reads, offset/limit, and in-file search. You SHOULD NOT use bash for file inspection when read can access the target files.";
+const WRITE_NUDGE = "Note: You SHOULD use apply_patch for file modifications. Bash write/destructive patterns are discouraged for reliability.";
 const BATCH_NUDGE = "Note: You SHOULD batch related file inspections into one read call (array input) instead of one-file-at-a-time reads.";
 
 function matchesBashRead(command: string): boolean {
@@ -39,10 +41,13 @@ export function setupReadGuard(pi: ExtensionAPI) {
 
     if (event.toolName === "bash" && !event.isError && event.input) {
       const command = (event.input.command as string) ?? "";
-      if (matchesBashRead(command)) {
+      const additions: string[] = [];
+      if (matchesBashRead(command)) additions.push(BASH_NUDGE);
+      if (detectBashWriteViolation(command)) additions.push(WRITE_NUDGE);
+      if (additions.length > 0) {
         const existing: (TextContent | ImageContent)[] = Array.isArray(event.content) ? event.content : [];
         return {
-          content: [...existing, { type: "text" as const, text: `\n${BASH_NUDGE}` }],
+          content: [...existing, { type: "text" as const, text: `\n${additions.join("\n")}` }],
         };
       }
     }
