@@ -234,7 +234,7 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
     messageLines.push(`PATCH ERROR: Failed to locate expected block near line ${firstLineNum} in ${pathText}.`);
     messageLines.push("Copy exact lines from the CURRENT FILE STATE section above.");
   }
-  const error = new Error(`PATCH FAILED: ${pathText}\n` + messageLines.join("\n")) as AnchorError;
+  const error = new Error(`PATCH FAILED:\n` + messageLines.join("\n")) as AnchorError;
   error.expected = expected;
   error.actual = sample;
   error.suggest = `Use exact lines from the CURRENT FILE STATE section above.`;
