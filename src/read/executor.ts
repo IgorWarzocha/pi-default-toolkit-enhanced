@@ -31,13 +31,8 @@ function renderLine(content: string): string {
 
 function createMatcher(file: ReadFileInput): (line: string) => boolean {
   if (!file.search) throw new Error("Invalid input: search query MUST be provided when search mode is used.");
-  const sensitive = file.caseSensitive === true;
-  if (file.regex) {
-    const pattern = new RegExp(file.search, sensitive ? "" : "i");
-    return (line: string) => pattern.test(line);
-  }
-  const needle = sensitive ? file.search : file.search.toLowerCase();
-  return (line: string) => (sensitive ? line : line.toLowerCase()).includes(needle);
+  const needle = file.search.toLowerCase();
+  return (line: string) => line.toLowerCase().includes(needle);
 }
 
 function searchFile(lines: string[], file: ReadFileInput): { output: string[]; matches: number } {
@@ -129,7 +124,7 @@ export async function executeRead(cwd: string, files: ReadFileInput[]) {
       if (file.search) {
         const result = searchFile(lines, file);
         content.push({ type: "text", text: result.output.join("\n") });
-        details.push({ path: file.path, search: file.search, regex: file.regex, matches: result.matches });
+        details.push({ path: file.path, search: file.search, matches: result.matches });
         continue;
       }
 

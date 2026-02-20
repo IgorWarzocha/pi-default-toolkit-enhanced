@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { apply } from "./mode.js";
-import { clearSystem, load, path, save, saveSystem, systemPath } from "./config.js";
+import { clearSystem, hasSystem, load, path, save, saveSystem, systemPath } from "./config.js";
 import { compose } from "./prompts.js";
 import { status } from "./runtime.js";
 import type { Mode } from "./types.js";
@@ -24,20 +24,23 @@ export function registerToolkit(pi: ExtensionAPI): void {
       if (direct) {
         const next = { mode: direct, overwrite: direct === "off" ? false : current.overwrite };
         if (next.mode === "off") {
-          const wipe = await ctx.ui.confirm(
-            "\u001b[31mDanger\u001b[0m",
-            `\u001b[31mMode 'off' will remove ${systemPath()} if present. Are you sure?\u001b[0m`,
-          );
-          if (!wipe) {
-            ctx.ui.notify("Toolkit unchanged.", "info");
-            return;
+          const exists = await hasSystem();
+          if (exists) {
+            const wipe = await ctx.ui.confirm(
+              "\u001b[31mDanger\u001b[0m",
+              `\u001b[31mMode 'off' will remove ${systemPath()}. Are you sure?\u001b[0m`,
+            );
+            if (!wipe) {
+              ctx.ui.notify("Toolkit unchanged.", "info");
+              return;
+            }
+            await clearSystem();
           }
-          await clearSystem();
         }
         apply(pi, next.mode);
         await save(next);
         if (next.overwrite) {
-          await saveSystem(compose(next.mode));
+          await saveSystem(compose(next.mode, ctx.getSystemPrompt()));
         }
         status(ctx, next);
         ctx.ui.notify(`Toolkit updated: mode=${next.mode}, overwrite=${next.overwrite}.`, "info");
@@ -54,15 +57,18 @@ export function registerToolkit(pi: ExtensionAPI): void {
       }
       let overwrite = false;
       if (mode === "off") {
-        const wipe = await ctx.ui.confirm(
-          "\u001b[31mDanger\u001b[0m",
-          `\u001b[31mMode 'off' will remove ${systemPath()} if present. Are you sure?\u001b[0m`,
-        );
-        if (!wipe) {
-          ctx.ui.notify("Toolkit unchanged.", "info");
-          return;
+        const exists = await hasSystem();
+        if (exists) {
+          const wipe = await ctx.ui.confirm(
+            "\u001b[31mDanger\u001b[0m",
+            `\u001b[31mMode 'off' will remove ${systemPath()}. Are you sure?\u001b[0m`,
+          );
+          if (!wipe) {
+            ctx.ui.notify("Toolkit unchanged.", "info");
+            return;
+          }
+          await clearSystem();
         }
-        await clearSystem();
       } else {
         overwrite = await ctx.ui.confirm(
           "System prompt overwrite",
@@ -73,7 +79,7 @@ export function registerToolkit(pi: ExtensionAPI): void {
       apply(pi, next.mode);
       await save(next);
       if (next.overwrite) {
-        await saveSystem(compose(next.mode));
+        await saveSystem(compose(next.mode, ctx.getSystemPrompt()));
       }
       status(ctx, next);
       ctx.ui.notify(`Toolkit saved to ${path()}. mode=${next.mode}, overwrite=${next.overwrite}.`, "info");

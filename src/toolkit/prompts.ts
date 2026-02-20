@@ -24,7 +24,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 export const RFC_XML_TOOLS = `<tools>
-- read: Read file contents.
+- read: Efficient multi-file reader for text and image files.
 - bash: Execute bash commands (ls, grep, find, etc.).
 - edit: Make surgical edits to files (find exact text and replace).
 - write: Create or overwrite files.
@@ -33,14 +33,16 @@ export const RFC_XML_TOOLS = `<tools>
 <guidelines>
 - Be concise. Show file paths clearly.
 - You MUST use read for inspection instead of cat or sed.
+- You MUST batch read calls for related files.
+- You MUST use mixed read modes in one call when practical (path strings + per-file objects).
+- read supports standard files and images.
 - You MUST use edit for precise in-place changes.
 - You MUST use write only for new files or complete rewrites.
-- You SHOULD batch related reads and related edits.
 - Non-user-facing markdown artifacts generated for agent workflows SHOULD use XML section blocks and RFC 2119 keywords.
 </guidelines>`;
 
 export const READ_TOOLS = `Available tools:
-- read: Read one or more files in a single call. Input MAY be a string path, an object payload, or an array mixing both forms.
+- read: Efficient multi-file reader for text and image files. You MAY mix path strings and per-file objects in one batched call.
 - bash: Execute bash commands (ls, grep, find, etc.)
 - edit: Make surgical edits to files (find exact text and replace)
 - write: Create or overwrite files
@@ -50,6 +52,9 @@ In addition to the tools above, you may have access to other custom tools depend
 Guidelines:
 - Use bash for file operations like ls, rg, find
 - Use read to examine files before editing. You MUST use this tool instead of cat or sed.
+- You MUST batch read calls for related files.
+- You MUST take advantage of mixed read modes when practical (path strings + per-file objects).
+- read supports both standard files and images.
 - Use edit for precise changes (old text must match exactly)
 - Use write only for new files or complete rewrites
 - When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
@@ -57,23 +62,20 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 export const APPLY_TOOLS = `Available tools:
-- read: Read file contents
-- bash: Execute bash commands (ls, grep, find, etc.)
 - apply_patch: Apply file modifications from one patch envelope. patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. The envelope MAY include Create/Edit/Delete/Move operations across multiple files.
 
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
 Guidelines:
-- Use bash for file operations like ls, rg, find
-- Use read to examine files before patching.
 - Use apply_patch for all destructive file operations.
-- When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
+- You MUST batch all related file changes in one patch envelope.
+- When summarizing your actions, output plain text directly.
 - Be concise in your responses
 - Show file paths clearly when working with files`;
 
 export const BOTH_TOOLS = `<tools>
 Available tools:
-- read: Read one or more files. Output MUST be plain text. You SHOULD batch related files in one call. For files over 1000 lines, an implicit 400-line safety limit SHALL apply when limit is omitted.
+- read: Efficient multi-file reader for text and image files. You MAY mix path strings and per-file objects in one batched call.
 - apply_patch: Edit files. patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. You MUST batch ALL related file changes in one envelope.
 - bash: Execute bash commands.
 </tools>
@@ -82,25 +84,19 @@ Available tools:
 - Be concise. Show file paths clearly.
 - read and apply_patch MUST be batched.
 - You MUST use read for inspection instead of cat or sed.
+- You MUST batch read calls for related files.
+- You MUST take advantage of mixed read modes when practical (path strings + per-file objects).
+- read supports both standard files and images.
 - You MUST use apply_patch for modifications.
 - You MUST NOT use bash redirects or shell text editors for file modification.
 - Non-user-facing markdown artifacts generated for agent workflows SHOULD use XML section blocks and RFC 2119 keywords.
 - Output MUST stay technical and compact.
 </guidelines>`;
 
-export const TAIL_DEFAULT = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: <pi-readme>
-- Additional docs: <pi-docs>
-- Examples: <pi-examples> (extensions, custom tools, SDK)
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+export const TAIL_DEFAULT = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):`;
 
 export const TAIL_RFC_XML = `<pi_documentation>
-- Main: <pi-readme>
-- Docs: <pi-docs>
-- Examples: <pi-examples>
-- Topics: extensions, themes, skills, prompt-templates, TUI, keybindings, SDK, custom-providers, models, packages.
+Pi documentation
 </pi_documentation>`;
 
 function head(mode: Mode): string {
@@ -116,21 +112,57 @@ export function block(mode: Mode): string {
   return DEFAULT_TOOLS;
 }
 
-function tail(mode: Mode): string {
-  if (mode === "rfc_xml" || mode === "both") return TAIL_RFC_XML;
-  return TAIL_DEFAULT;
+function boundaries(
+  prompt: string,
+): { toolsStart: number; docsStart: number; docsEnd: number } | undefined {
+  const toolsStart = prompt.indexOf("\n\nAvailable tools:\n");
+  const docsStart = prompt.indexOf("\n\nPi documentation", toolsStart + 1);
+  if (toolsStart === -1 || docsStart === -1 || docsStart <= toolsStart) {
+    return undefined;
+  }
+  const contextStart = prompt.indexOf("\n\n# Project Context", docsStart + 1);
+  const timeStart = prompt.indexOf("\nCurrent date and time:", docsStart + 1);
+  let docsEnd = prompt.length;
+  if (contextStart !== -1) {
+    docsEnd = contextStart;
+  }
+  if (timeStart !== -1 && timeStart < docsEnd) {
+    docsEnd = timeStart;
+  }
+  return { toolsStart, docsStart, docsEnd };
 }
 
-export function compose(mode: Mode): string {
-  return `${head(mode)}\n\n${block(mode)}\n\n${tail(mode)}`;
+function docs(prompt: string, docsStart: number, docsEnd: number): string {
+  return prompt.slice(docsStart + 2, docsEnd).trim();
+}
+
+function xmlDocs(prompt: string, docsStart: number, docsEnd: number): string {
+  return `<pi_documentation>\n${docs(prompt, docsStart, docsEnd)}\n</pi_documentation>`;
+}
+
+export function compose(mode: Mode, prompt: string): string {
+  const cuts = boundaries(prompt);
+  if (!cuts) {
+    return `${head(mode)}\n\n${block(mode)}\n\n${mode === "rfc_xml" || mode === "both" ? TAIL_RFC_XML : TAIL_DEFAULT}`;
+  }
+  const rest = prompt.slice(cuts.docsEnd);
+  const tail =
+    mode === "rfc_xml" || mode === "both"
+      ? xmlDocs(prompt, cuts.docsStart, cuts.docsEnd)
+      : docs(prompt, cuts.docsStart, cuts.docsEnd);
+  return `${head(mode)}\n\n${block(mode)}\n\n${tail}${rest}`;
 }
 
 export function inject(prompt: string, mode: Mode): string {
-  const start = prompt.indexOf("\n\nAvailable tools:\n");
-  const end = prompt.indexOf("\n\nPi documentation");
-  if (start === -1 || end === -1 || end <= start) {
+  const cuts = boundaries(prompt);
+  if (!cuts) {
     return prompt;
   }
-  const next = compose(mode);
-  return next;
+  const headText = prompt.slice(0, cuts.toolsStart).trimEnd();
+  const rest = prompt.slice(cuts.docsEnd);
+  const tail =
+    mode === "rfc_xml" || mode === "both"
+      ? xmlDocs(prompt, cuts.docsStart, cuts.docsEnd)
+      : docs(prompt, cuts.docsStart, cuts.docsEnd);
+  return `${headText}\n\n${block(mode)}\n\n${tail}${rest}`;
 }

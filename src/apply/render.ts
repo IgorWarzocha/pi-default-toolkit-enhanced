@@ -60,21 +60,15 @@ export function formatSummary(summary: ApplySummary): string {
   if (summary.failed?.length > 0) {
     lines.push("\nFAILURES:");
     for (const failed of summary.failed) {
-      const errorLines = failed.error.split("\n");
-      lines.push(`  ! ${failed.path}: ${errorLines[0] ?? ""}`);
-      for (let index = 1; index < errorLines.length; index += 1) {
-        const line = errorLines[index];
-        if (line.trim().length === 0) continue;
-        lines.push(`    ${line}`);
-      }
-      const hasState = failed.error.includes("CURRENT FILE STATE:");
-      if (!hasState && failed.actual && failed.actual.length > 0) {
-        lines.push("    CURRENT FILE STATE:");
+      lines.push(`- ${failed.path}`);
+      lines.push(failed.error);
+      if (!failed.error.includes("CURRENT FILE STATE:") && failed.actual && failed.actual.length > 0) {
+        lines.push("CURRENT FILE STATE:");
         const limit = Math.min(12, failed.actual.length);
-        for (let index = 0; index < limit; index += 1) lines.push(`      ${failed.actual[index]}`);
-        if (failed.actual.length > limit) lines.push(`      ... (${failed.actual.length - limit} more lines)`);
+        for (let index = 0; index < limit; index += 1) lines.push(failed.actual[index]);
+        if (failed.actual.length > limit) lines.push(`... (${failed.actual.length - limit} more lines)`);
       }
-      if (failed.suggest) lines.push(`    HINT: ${failed.suggest}`);
+      if (failed.suggest) lines.push(`HINT: ${failed.suggest}`);
     }
   }
   

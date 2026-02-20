@@ -9,7 +9,7 @@ function pick(mode: Mode): string[] {
     return ["read", "bash", "edit", "write"];
   }
   if (mode === "apply_patch") {
-    return ["read", "bash", "apply_patch"];
+    return ["apply_patch"];
   }
   if (mode === "both") {
     return ["read", "bash", "apply_patch"];

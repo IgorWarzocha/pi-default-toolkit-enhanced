@@ -19,16 +19,6 @@ export const ReadFileSchema = Type.Object({
       description: "OPTIONAL. Search query. When set, tool SHALL return matches and optional context.",
     }),
   ),
-  regex: Type.Optional(
-    Type.Boolean({
-      description: "OPTIONAL. If true, search MUST be interpreted as regex.",
-    }),
-  ),
-  caseSensitive: Type.Optional(
-    Type.Boolean({
-      description: "OPTIONAL. Case-sensitive search. Default false.",
-    }),
-  ),
   contextBefore: Type.Optional(
     Type.Number({
       description: "OPTIONAL. Context lines before each match.",
@@ -53,7 +43,6 @@ export type ReadDetail = {
   offset?: number;
   limit?: number;
   search?: string;
-  regex?: boolean;
   matches?: number;
   truncated?: boolean;
   error?: string;

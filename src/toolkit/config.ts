@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "./types.js";
@@ -50,6 +50,15 @@ export async function clearSystem(): Promise<void> {
 
 export function path(): string {
   return FILE;
+}
+
+export async function hasSystem(): Promise<boolean> {
+  try {
+    await access(SYSTEM);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function systemPath(): string {

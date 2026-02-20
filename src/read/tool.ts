@@ -11,14 +11,14 @@ export function registerReadTool(pi: ExtensionAPI) {
     name: "read",
     label: "Read File(s)",
     description:
-      "Read one or more files. Output MUST be plain text. You SHOULD batch related files in one call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. For files over 1000 lines, an implicit 400-line safety limit SHALL apply when limit is omitted. Search SHALL evaluate per line.",
+      "Read one or more files. Output MUST be plain text. You SHOULD batch related files in one call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. For files over 1000 lines, an implicit 400-line safety limit SHALL apply when limit is omitted. Search SHALL evaluate per line and SHALL be case-insensitive.",
     parameters: Type.Object({
       files: Type.Union([
         Type.String({
           description: "Input MUST be one of: file path string, JSON object { path, ... }, or JSON array of entries.",
         }),
         Type.Array(Type.Union([Type.String(), ReadFileSchema]), {
-          description: "Multi-read payload. Each entry MAY include offset, limit, search, regex, caseSensitive, contextBefore, contextAfter, maxMatches.",
+          description: "Multi-read payload. Each entry MAY include offset, limit, search, contextBefore, contextAfter, maxMatches.",
         }),
       ]),
     }),
