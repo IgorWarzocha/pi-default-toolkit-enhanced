@@ -25,8 +25,9 @@ function detectImage(buffer: Buffer): string | null {
   return null;
 }
 
-function prefixLine(line: number, content: string): string {
-  return `${line}|${content}`;
+function renderLine(file: ReadFileInput, line: number, content: string): string {
+  if (file.includeLineNumbers === true) return `${line}|${content}`;
+  return content;
 }
 
 function createMatcher(file: ReadFileInput): (line: string) => boolean {
@@ -67,7 +68,7 @@ function searchFile(lines: string[], file: ReadFileInput): { output: string[]; m
   let previous = -2;
   for (const index of sorted) {
     if (previous !== -2 && index > previous + 1) output.push("...");
-    output.push(prefixLine(index + 1, lines[index]));
+    output.push(renderLine(file, index + 1, lines[index]));
     previous = index;
   }
 
@@ -86,7 +87,7 @@ function readRange(lines: string[], file: ReadFileInput): { output: string[]; tr
   let truncated = false;
 
   for (let index = start; index < end; index += 1) {
-    const line = prefixLine(index + 1, lines[index]);
+    const line = renderLine(file, index + 1, lines[index]);
     if (output.length >= MAX_LINES || bytes + line.length > MAX_BYTES) {
       truncated = true;
       output.push(`\n[Showing lines ${start + 1}-${index} of ${lines.length}. Use offset=${index + 1} to continue.]`);
