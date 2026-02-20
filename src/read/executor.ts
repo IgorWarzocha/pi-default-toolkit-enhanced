@@ -78,7 +78,9 @@ function readRange(lines: string[], file: ReadFileInput): { output: string[]; tr
   const start = Math.max(0, (file.offset ?? 1) - 1);
   if (start >= lines.length) throw new Error(`Offset ${file.offset} is beyond end of file (${lines.length} lines)`);
 
-  const end = file.limit ? Math.min(lines.length, start + file.limit) : lines.length;
+  const implicit = file.limit === undefined && lines.length > 1000 ? 400 : undefined;
+  const count = file.limit ?? implicit;
+  const end = count !== undefined ? Math.min(lines.length, start + count) : lines.length;
   const output: string[] = [];
   let bytes = 0;
   let truncated = false;
@@ -94,8 +96,9 @@ function readRange(lines: string[], file: ReadFileInput): { output: string[]; tr
     bytes += line.length + 1;
   }
 
-  if (!truncated && file.limit && start + file.limit < lines.length) {
-    output.push(`\n[${lines.length - (start + file.limit)} more lines. Use offset=${end + 1} to continue.]`);
+  if (!truncated && count !== undefined && start + count < lines.length) {
+    const mode = file.limit === undefined ? "implicit safety limit" : "requested limit";
+    output.push(`\n[${lines.length - (start + count)} more lines (${mode}). Use offset=${end + 1} to continue.]`);
   }
 
   return { output, truncated };

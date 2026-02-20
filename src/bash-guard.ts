@@ -30,7 +30,7 @@ export function detectBashWriteViolation(command: string): string | null {
   const segments = stripped.split(/\s*(?:\|(?!\|)|\|\||&&|;|\$\(|\(|\))\s*/);
 
   // Commands that always write files
-  const forbiddenCommands = new Set(["tee", "truncate"]);
+  const forbiddenCommands = new Set(["tee", "truncate", "cp", "mv"]);
 
   for (const segment of segments) {
     let rest = segment.trim();
@@ -65,9 +65,12 @@ export function detectBashWriteViolation(command: string): string | null {
       return "Command 'sed -i' edits files in-place. You MUST use apply_patch instead. 'sed' without '-i' (print-only) is allowed.";
     }
 
-    // dd is only forbidden with of= (output file)
     if (cmdName === "dd" && /\bof=/.test(rest)) {
       return "Command 'dd of=' writes to files. You MUST use apply_patch for all file modifications.";
+    }
+
+    if (cmdName === "rm") {
+      return "Command 'rm' deletes files. You MUST use apply_patch with Delete File sections for file removals.";
     }
   }
 

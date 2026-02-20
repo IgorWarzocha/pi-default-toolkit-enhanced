@@ -11,7 +11,7 @@ export function registerReadTool(pi: ExtensionAPI) {
     name: "read",
     label: "Read File(s)",
     description:
-      "Read files with LINE|CONTENT output for apply_patch. Format: <line>|<content>. You MUST batch ALL files into ONE call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. You MUST copy anchored lines EXACTLY for edit hunk context (' ') and removal ('-'). You MUST NOT prefix '+' addition lines. You MUST NOT re-read files after successful apply_patch — the tool SHALL return updated anchors. You SHOULD NOT use bash (cat/sed/head) for inspection.",
+      "Read files with LINE|CONTENT output for apply_patch. Format: <line>|<content>. You MUST batch ALL files into ONE call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. You MUST copy anchored lines EXACTLY for edit hunk context (' ') and removal ('-'). You MUST NOT prefix '+' addition lines. You MUST NOT re-read files after successful apply_patch — the tool SHALL return updated anchors. For files larger than 1000 lines, the tool SHALL apply an implicit 400-line safety limit when limit is omitted. Regex search applies per line. You SHOULD NOT use bash (cat/sed/head) for inspection.",
     parameters: Type.Object({
       files: Type.Union([
         Type.String({
