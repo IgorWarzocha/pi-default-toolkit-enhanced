@@ -23,13 +23,12 @@ function sanitizeAddedLine(line: string): string {
 }
 
 function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number } {
-  const trimmed = body.trimStart();
-  const match = trimmed.match(/^(\d+)\|(.*)$/);
+  const match = body.trimStart().match(/^(\d+)\|(.*)$/);
   if (!match) {
-    if (trimmed.length === 0) {
+    if (body.length === 0) {
       throw new InvalidHunkError("Context/removal lines MUST NOT be empty.", lineNumber);
     }
-    return { line: trimmed, lineNumber: 0 };
+    return { line: body, lineNumber: 0 };
   }
   const rawLine = Number.parseInt(match[1], 10);
   if (!Number.isFinite(rawLine) || rawLine < 1) {
@@ -269,13 +268,19 @@ function parseEditFileChunk(
 
   let changeContext: string | undefined;
   let startIndex: number;
+  let oldStart = 0;
 
   if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
     startIndex = 1;
   } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
     const raw = lines[0];
-    const git = raw.match(/^@@\s*-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
-    changeContext = git ? git[1] : raw.slice(CHANGE_CONTEXT_MARKER.length);
+    const git = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
+    if (git) {
+      oldStart = Number.parseInt(git[1], 10);
+      changeContext = git[2];
+    } else {
+      changeContext = raw.slice(CHANGE_CONTEXT_MARKER.length);
+    }
     startIndex = 1;
   } else {
     startIndex = 0;
@@ -308,10 +313,18 @@ function parseEditFileChunk(
       break;
     }
 
+    if (line.startsWith("*** ")) {
+      break;
+    }
+
+    if (line === EMPTY_CHANGE_CONTEXT_MARKER || line.startsWith(CHANGE_CONTEXT_MARKER)) {
+      if (parsedBodyLines > 0) break;
+    }
+
     if (line.length === 0) {
       if (chunk.oldLines.length > 0 || chunk.newLines.length > 0) {
         const nextLine = lines[startIndex + parsedBodyLines + 1];
-        if (nextLine && nextLine.length > 0) {
+        if (nextLine && nextLine.length > 0 && !nextLine.startsWith("*** ")) {
           chunk.newLines.push("");
           parsedBodyLines += 1;
           continue;
@@ -342,9 +355,24 @@ function parseEditFileChunk(
       continue;
     }
 
+    if (chunk.oldLines.length === 0 && !chunk.changeContext) {
+      throw new InvalidHunkError(
+        `Unexpected unprefixed line in edit hunk: '${line.slice(0, 80)}'.` +
+          `\nUnprefixed additions are allowed only after at least one context/removal line or @@ context.` +
+          `\nYou SHOULD use '+' for additions when no context/removal lines are provided.`,
+        lineNumber + startIndex + parsedBodyLines + 1,
+      );
+    }
     chunk.newLines.push(line);
     parsedBodyLines += 1;
     continue;
   }
+  if (oldStart > 0) {
+    for (let index = 0; index < chunk.oldAnchors.length; index += 1) {
+      if (chunk.oldAnchors[index].line > 0) continue;
+      chunk.oldAnchors[index].line = oldStart + index;
+    }
+  }
+
   return { chunk, consumedLines: parsedBodyLines + startIndex };
 }
