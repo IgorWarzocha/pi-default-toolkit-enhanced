@@ -9,7 +9,7 @@ export function registerApplyTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "apply_patch",
     label: "apply_patch",
-    description: `Apply file modifications from a patch envelope. STRUCTURE: patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. SECTIONS: each file change MUST use one of: '*** Create File: <path>', '*** Edit File: <path>', '*** Delete File: <path>', or '*** Move File: <path>' plus '*** Move to: <new-path>'. HUNKS: Edit File sections MAY use '@@ <context>' and MAY use either strict prefixed diff lines (' ', '+', '-') or lenient body lines (unprefixed lines are treated as additions). Context/removal lines SHOULD be plain content. Range replacement is supported by providing first and last removal lines. You MUST batch related file changes in one apply_patch call.`,
+    description: `Apply file modifications from a patch envelope. STRUCTURE: patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. SECTIONS: each file change MUST use one of: '*** Create File: <path>', '*** Edit File: <path>', '*** Delete File: <path>', or '*** Move File: <path>' plus '*** Move to: <new-path>'. HUNKS: Edit File sections MAY use '@@ <context>' and MAY use either strict prefixed diff lines (' ', '+', '-') or lenient body lines (unprefixed lines are treated as additions). Insertion-only hunks MUST include @@ context for deterministic placement. Context/removal lines SHOULD be plain content. Range replacement is supported by providing first and last removal lines. You MUST batch related file changes in one apply_patch call.`,
     renderCall(args, theme) {
       return renderApplyPatchCall(args, parsePatch, theme);
     },
@@ -18,7 +18,7 @@ export function registerApplyTool(pi: ExtensionAPI): void {
     },
     parameters: Type.Object({
       patchText: Type.String({
-        description: "Patch envelope text. It MUST start with '*** Begin Patch' and end with '*** End Patch'. Edit hunks MAY use '@@ <context>'. Hunk bodies SHOULD use ' ', '+', '-' prefixes, but unprefixed lines are accepted as additions. Context/removal lines SHOULD be plain content.",
+        description: "Patch envelope text. It MUST start with '*** Begin Patch' and end with '*** End Patch'. Edit hunks MAY use '@@ <context>'. Hunk bodies SHOULD use ' ', '+', '-' prefixes, but unprefixed lines are accepted as additions. Insertion-only hunks MUST include @@ context. Context/removal lines SHOULD be plain content.",
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
