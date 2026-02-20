@@ -18,7 +18,7 @@ function sanitizeContext(context: string): string {
 }
 
 function prefixLine(line: number, content: string): string {
-  return `${line}|${content}`;
+  return `${line}: ${content}`;
 }
 
 function findContext(lines: string[], context: string, start: number): number {

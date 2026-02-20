@@ -274,14 +274,22 @@ function parseEditFileChunk(
     startIndex = 1;
   } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
     const raw = lines[0];
-    const git = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
-    if (git) {
-      oldStart = Number.parseInt(git[1], 10);
-      changeContext = git[2];
+    const gitFull = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
+    if (gitFull) {
+      oldStart = Number.parseInt(gitFull[1], 10);
+      changeContext = gitFull[2];
+      startIndex = 1;
     } else {
-      changeContext = raw.slice(CHANGE_CONTEXT_MARKER.length);
+      const gitOldOnly = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s*@@\s*(.*)$/);
+      if (gitOldOnly) {
+        oldStart = Number.parseInt(gitOldOnly[1], 10);
+        changeContext = gitOldOnly[2];
+        startIndex = 1;
+      } else {
+        changeContext = raw.slice(CHANGE_CONTEXT_MARKER.length);
+        startIndex = 1;
+      }
     }
-    startIndex = 1;
   } else {
     startIndex = 0;
   }
