@@ -26,7 +26,7 @@ function parseAnchoredBody(body: string, lineNumber: number): { line: string; li
   const match = body.match(/^\s*(\d+)\|(.*)$/);
   if (!match) {
     if (body.length === 0) {
-      throw new InvalidHunkError("Context/removal lines MUST NOT be empty.", lineNumber);
+      return { line: "", lineNumber: 0 };
     }
     return { line: body, lineNumber: 0 };
   }
