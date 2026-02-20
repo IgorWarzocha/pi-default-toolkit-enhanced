@@ -4,10 +4,8 @@ import type { Hunk, EditFileChunk, ApplySummary } from "./types.js";
 import type { ApplyNoop } from "./types.js";
 import { resolvePatchPath } from "./path-utils.js";
 import { buildNumberedDiff } from "./render.js";
-import { normalizeForHash } from "../shared/normalize.js";
-import { computeLineHash } from "../shared/hash.js";
+import { normalizeLine } from "../shared/normalize.js";
 import { computeReplacementsWithHealing, type ReplaceOp } from "./healing.js";
-import { formatContent } from "./formatter.js";
 
 type AnchorError = Error & {
   expected?: string[];
@@ -16,14 +14,18 @@ type AnchorError = Error & {
 };
 
 function sanitizeContext(context: string): string {
-  return context.replace(/^\d+:[a-f]{2}\|/, "");
+  return context.replace(/^\s*\d+:\s*/, "").replace(/^\s*\d+\|/, "");
+}
+
+function prefixLine(line: number, content: string): string {
+  return `${line}: ${content}`;
 }
 
 function findContext(lines: string[], context: string, start: number): number {
   const target = sanitizeContext(context);
   let index = Math.max(0, start);
   while (index < lines.length) {
-    if (normalizeForHash(lines[index], false) === normalizeForHash(target, false)) return index;
+    if (normalizeLine(lines[index], false) === normalizeLine(target, false)) return index;
     index += 1;
   }
   throw new Error(`Failed to find context '${target}'.`);
@@ -35,7 +37,7 @@ function contextError(lines: string[], pathText: string, context: string, seed: 
   const sample: string[] = [];
   let index = start;
   while (index < stop) {
-    sample.push(`${index + 1}:${computeLineHash(lines[index])}|${lines[index]}`);
+    sample.push(prefixLine(index + 1, lines[index]));
     index += 1;
   }
   const error = new Error(
@@ -56,9 +58,8 @@ function contextError(lines: string[], pathText: string, context: string, seed: 
   return error;
 }
 
-function linesEqual(fileLine: string, expected: string, expectedHash: string): boolean {
-  if (computeLineHash(fileLine) === expectedHash) return true;
-  return normalizeForHash(fileLine, false) === normalizeForHash(expected, false);
+function linesEqual(fileLine: string, expected: string): boolean {
+  return normalizeLine(fileLine, false) === normalizeLine(expected, false);
 }
 
 function matchChunkAt(lines: string[], chunk: EditFileChunk, start: number): boolean {
@@ -66,10 +67,7 @@ function matchChunkAt(lines: string[], chunk: EditFileChunk, start: number): boo
   if (start < 0 || start + chunk.oldLines.length > lines.length) return false;
   let index = 0;
   while (index < chunk.oldLines.length) {
-    const fileLine = lines[start + index];
-    const expected = chunk.oldLines[index];
-    const anchor = chunk.oldAnchors[index];
-    if (!linesEqual(fileLine, expected, anchor.hash)) return false;
+    if (!linesEqual(lines[start + index], chunk.oldLines[index])) return false;
     index += 1;
   }
   return true;
@@ -89,28 +87,23 @@ function spiral(seed: number, max: number): number[] {
   return out;
 }
 
-function buildUniqueLineByHash(lines: string[]): Map<string, number> {
-  const uniqueLineByHash = new Map<string, number>();
-  const seenDuplicateHashes = new Set<string>();
+function buildUniqueLineByContent(lines: string[]): Map<string, number> {
+  const uniqueLineByContent = new Map<string, number>();
+  const seenDuplicate = new Set<string>();
   for (let i = 0; i < lines.length; i++) {
-    const hash = computeLineHash(lines[i]);
-    if (seenDuplicateHashes.has(hash)) continue;
-    if (uniqueLineByHash.has(hash)) {
-      uniqueLineByHash.delete(hash);
-      seenDuplicateHashes.add(hash);
-    } else {
-      uniqueLineByHash.set(hash, i + 1);
+    const key = normalizeLine(lines[i], false);
+    if (seenDuplicate.has(key)) continue;
+    if (uniqueLineByContent.has(key)) {
+      uniqueLineByContent.delete(key);
+      seenDuplicate.add(key);
+      continue;
     }
+    uniqueLineByContent.set(key, i + 1);
   }
-  return uniqueLineByHash;
+  return uniqueLineByContent;
 }
 
-function locate(
-  lines: string[],
-  chunk: EditFileChunk,
-  seed: number,
-  uniqueLineByHash: Map<string, number>,
-): number {
+function locate(lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>): number {
   if (chunk.oldLines.length === 0) return Math.max(0, Math.min(seed, lines.length));
   const max = Math.max(0, lines.length - chunk.oldLines.length + 1);
   if (chunk.isEndOfFile) {
@@ -119,31 +112,25 @@ function locate(
     throw new Error("EOF chunk did not match file tail.");
   }
   const firstAnchor = chunk.oldAnchors[0];
-  const target = firstAnchor ? seed : 0;
-  if (target < 0 || target >= max) {
-    throw new Error("Adjusted target is out of bounds.");
-  }
+  const target = firstAnchor && firstAnchor.line > 0 ? seed : 0;
+  if (target < 0 || target >= max) throw new Error("Adjusted target is out of bounds.");
   const candidates = spiral(target, max);
   const hits: number[] = [];
   for (const candidate of candidates) {
     if (matchChunkAt(lines, chunk, candidate)) hits.push(candidate);
   }
   if (hits.length === 0) {
-    const firstAnchor = chunk.oldAnchors[0];
-    if (firstAnchor) {
-      const relocated = uniqueLineByHash.get(firstAnchor.hash);
-      if (relocated !== undefined && matchChunkAt(lines, chunk, relocated - 1)) {
-        return relocated - 1;
-      }
+    const first = chunk.oldLines[0];
+    if (first) {
+      const relocated = uniqueLineByContent.get(normalizeLine(first, false));
+      if (relocated !== undefined && matchChunkAt(lines, chunk, relocated - 1)) return relocated - 1;
     }
     throw new Error("No anchor match found in +/-100 spiral window.");
   }
   const best = hits[0];
   const bestDistance = Math.abs(best - target);
   const tie = hits.find((value, index) => index > 0 && Math.abs(value - target) === bestDistance);
-  if (tie !== undefined) {
-    throw new Error(`Equidistant anchor collision at lines ${best + 1} and ${tie + 1}.`);
-  }
+  if (tie !== undefined) throw new Error(`Equidistant anchor collision at lines ${best + 1} and ${tie + 1}.`);
   return best;
 }
 
@@ -175,7 +162,7 @@ function anchorLines(lines: string[]): string[] {
   const out: string[] = [];
   let index = 0;
   while (index < lines.length) {
-    out.push(`${index + 1}:${computeLineHash(lines[index])}|${lines[index]}`);
+    out.push(prefixLine(index + 1, lines[index]));
     index += 1;
   }
   return out;
@@ -188,103 +175,69 @@ function anchorsFromContent(content: string): string[] {
 function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): AnchorError {
   const first = chunk.oldAnchors[0];
   if (!first) return new Error(`ANCHOR ERROR: No valid anchors provided for ${pathText}.`);
-
-  const mismatchSet = new Map<number, { expected: string; actual: string; contentMatches: boolean }>();
+  const mismatchSet = new Set<number>();
   const outOfBounds: number[] = [];
-
   for (let i = 0; i < chunk.oldAnchors.length; i++) {
     const anchor = chunk.oldAnchors[i];
+    if (anchor.line <= 0) continue;
     const lineIdx = anchor.line - 1;
-
     if (lineIdx < 0 || lineIdx >= lines.length) {
       outOfBounds.push(anchor.line);
       continue;
     }
-
-    const actualHash = computeLineHash(lines[lineIdx]);
-    if (actualHash !== anchor.hash) {
-      const contentMatches = normalizeForHash(lines[lineIdx], false) === normalizeForHash(chunk.oldLines[i], false);
-      mismatchSet.set(anchor.line, { expected: anchor.hash, actual: actualHash, contentMatches });
-    }
+    if (!linesEqual(lines[lineIdx], chunk.oldLines[i])) mismatchSet.add(anchor.line);
   }
-
-  const firstLineNum = first.line;
+  const firstLineNum = first.line > 0 ? first.line : 1;
   const contextStart = Math.max(0, firstLineNum - 5);
   const contextEnd = Math.min(lines.length, firstLineNum + 10);
   const sample: string[] = [];
   for (let i = contextStart; i < contextEnd; i++) {
-    sample.push(`${i + 1}:${computeLineHash(lines[i])}|${lines[i]}`);
+    sample.push(prefixLine(i + 1, lines[i]));
   }
-
   const expected: string[] = [];
   for (let i = 0; i < chunk.oldLines.length; i++) {
     const anchor = chunk.oldAnchors[i];
-    expected.push(`${anchor.line}:${anchor.hash}|${chunk.oldLines[i]}`);
+    expected.push(anchor.line > 0 ? prefixLine(anchor.line, chunk.oldLines[i]) : chunk.oldLines[i]);
   }
-
   const messageLines: string[] = [];
-
   if (outOfBounds.length > 0) {
     messageLines.push(`LINE NUMBER ERROR: Line(s) ${outOfBounds.join(", ")} do not exist in ${pathText}.`);
     messageLines.push(`The file has ${lines.length} line(s). You MUST use line numbers within range 1-${lines.length}.`);
     messageLines.push("");
   }
-
   if (mismatchSet.size > 0) {
-    const contentOnlyMismatches = [...mismatchSet.values()].filter(m => m.contentMatches);
-    const hashMismatches = [...mismatchSet.values()].filter(m => !m.contentMatches);
-
-    if (contentOnlyMismatches.length > 0) {
-      messageLines.push(`MISMATCH: Formatting/whitespace changes detected.`);
-    }
-
-    if (hashMismatches.length > 0) {
-      messageLines.push(`MISMATCH: ${hashMismatches.length} line(s) differ from expectation.`);
-    }
-
-    messageLines.push("CURRENT ANCHORS:");
+    messageLines.push(`MISMATCH: ${mismatchSet.size} line(s) differ from expectation.`);
+    messageLines.push("CURRENT FILE STATE:");
     const contextLines = new Set<number>();
     for (const lineNum of mismatchSet.keys()) {
       for (let i = Math.max(1, lineNum - 2); i <= Math.min(lines.length, lineNum + 2); i++) {
         contextLines.add(i);
       }
     }
-
     if (contextLines.size === 0) {
       for (let i = Math.max(1, firstLineNum - 1); i <= Math.min(lines.length, firstLineNum + 3); i++) {
         contextLines.add(i);
       }
     }
-
     const sortedContext = [...contextLines].sort((a, b) => a - b);
     let prevLine = 0;
     for (const lineNum of sortedContext) {
       if (prevLine > 0 && lineNum > prevLine + 1) messageLines.push("  ...");
       prevLine = lineNum;
       const content = lines[lineNum - 1] ?? "";
-      const hash = computeLineHash(content);
-      const prefix = `${lineNum}:${hash}|${content}`;
-      if (mismatchSet.has(lineNum)) {
-        messageLines.push(`! ${prefix}`);
-      } else {
-        messageLines.push(`  ${prefix}`);
-      }
+      const prefix = prefixLine(lineNum, content);
+      if (mismatchSet.has(lineNum)) messageLines.push(`> ${prefix}`);
+      else messageLines.push(`  ${prefix}`);
     }
   }
-
   if (messageLines.length === 0) {
-    messageLines.push(`ANCHOR ERROR: Failed to locate block at line ${firstLineNum} in ${pathText}.`);
-    messageLines.push("Copy anchors from the CURRENT FILE STATE section above.");
+    messageLines.push(`PATCH ERROR: Failed to locate expected block near line ${firstLineNum} in ${pathText}.`);
+    messageLines.push("Copy exact lines from the CURRENT FILE STATE section above.");
   }
-
-  const error = new Error(
-    `PATCH FAILED: ${pathText}\n` + messageLines.join("\n")
-  ) as AnchorError;
+  const error = new Error(`PATCH FAILED:\n` + messageLines.join("\n")) as AnchorError;
   error.expected = expected;
   error.actual = sample;
-  error.suggest = mismatchSet.size > 0
-    ? `Copy the [!!!] or [FMT] lines shown above - do not re-read the file.`
-    : `Use anchors from the CURRENT FILE STATE section above.`;
+  error.suggest = `Use exact lines from the CURRENT FILE STATE section above.`;
   return error;
 }
 
@@ -304,14 +257,12 @@ async function deriveUpdatedContentWithHealing(
     findContext,
     contextError,
     mismatch,
-    buildUniqueLineByHash,
+    buildUniqueLineByContent,
   );
   const updatedLines = collapseEmpty(applyReplacements(originalLines, replacements));
   if (updatedLines[updatedLines.length - 1] !== "") updatedLines.push("");
-  let content = updatedLines.join("\n");
-  content = await formatContent(filePath, content);
-  const formattedLines = content.split("\n");
-  return { content, anchors: anchorLines(formattedLines) };
+  const content = updatedLines.join("\n");
+  return { content, anchors: anchorLines(content.split("\n")) };
 }
 
 function upsertLive(summary: ApplySummary, pathText: string, anchors: string[]): void {
@@ -327,27 +278,14 @@ function upsertLive(summary: ApplySummary, pathText: string, anchors: string[]):
 }
 
 export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySummary> {
-  if (hunks.length === 0) {
-    throw new Error("No files were modified. You MUST include at least one file section in the patch.");
-  }
-  const summary: ApplySummary = {
-    created: [],
-    edited: [],
-    moved: [],
-    deleted: [],
-    failed: [],
-    live: [],
-    fileDiffs: [],
-    noops: [],
-  };
-
+  if (hunks.length === 0) throw new Error("No files were modified. You MUST include at least one file section in the patch.");
+  const summary: ApplySummary = { created: [], edited: [], moved: [], deleted: [], failed: [], live: [], fileDiffs: [], noops: [] };
   const filePathsInPatch = new Set<string>();
   for (const hunk of hunks) {
     filePathsInPatch.add(hunk.filePath);
     if (hunk.type === "edit" && hunk.moveToPath) filePathsInPatch.add(hunk.moveToPath);
     if (hunk.type === "move" && hunk.moveToPath) filePathsInPatch.add(hunk.moveToPath);
   }
-
   for (const hunk of hunks) {
     try {
       if (hunk.type === "create") {
@@ -357,19 +295,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
           await fs.stat(target);
           exists = true;
         } catch {}
-        if (exists) {
-          throw new Error(
-            `CONFLICT: File already exists: ${hunk.filePath}` +
-              `\n` +
-              `\nREQUIREMENT: You MUST NOT use Create File to overwrite existing files.` +
-              `\n` +
-              `\nACTION REQUIRED:` +
-              `\n1. If you need to edit the file: Use Edit File instead` +
-              `\n2. If you need full replacement: Use Delete File + Create File in ONE patch` +
-              `\n   - Place Delete File before Create File` +
-              `\n   - Both operations MUST be in the same apply_patch call`,
-          );
-        }
+        if (exists) throw new Error(`CONFLICT: File already exists: ${hunk.filePath}` + `\n\nREQUIREMENT: You MUST NOT use Create File to overwrite existing files.` + `\n\nACTION REQUIRED:` + `\n1. If you need to edit the file: Use Edit File instead` + `\n2. If you need full replacement: Use Delete File + Create File in ONE patch` + `\n   - Place Delete File before Create File` + `\n   - Both operations MUST be in the same apply_patch call`);
         await fs.mkdir(path.dirname(target), { recursive: true });
         await fs.writeFile(target, hunk.contents, "utf-8");
         summary.created.push(hunk.filePath);
@@ -394,13 +320,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
           await fs.stat(destination);
           destExists = true;
         } catch {}
-        if (destExists) {
-          throw new Error(
-            `CONFLICT: Move destination already exists: ${hunk.moveToPath}` +
-              `\n` +
-              `\nACTION REQUIRED: Delete the destination file before moving, or use Edit File if you intend to merge.`,
-          );
-        }
+        if (destExists) throw new Error(`CONFLICT: Move destination already exists: ${hunk.moveToPath}` + `\n\nACTION REQUIRED: Delete the destination file before moving, or use Edit File if you intend to merge.`);
         await fs.mkdir(path.dirname(destination), { recursive: true });
         await fs.writeFile(destination, originalContent, "utf-8");
         try {
@@ -425,13 +345,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
           await fs.stat(destination);
           destExists = true;
         } catch {}
-        if (destExists) {
-          throw new Error(
-            `CONFLICT: Edit destination already exists: ${hunk.moveToPath}` +
-              `\n` +
-              `\nACTION REQUIRED: Delete the destination file before moving/editing, or edit the existing file directly.`,
-          );
-        }
+        if (destExists) throw new Error(`CONFLICT: Edit destination already exists: ${hunk.moveToPath}` + `\n\nACTION REQUIRED: Delete the destination file before moving/editing, or edit the existing file directly.`);
         await fs.mkdir(path.dirname(destination), { recursive: true });
         await fs.writeFile(destination, next.content, "utf-8");
         try {
@@ -452,22 +366,14 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
     } catch (error) {
       const typed = error as AnchorError;
       const message = error instanceof Error ? error.message : String(error);
-      const failure = { path: hunk.filePath, error: message } as {
-        path: string;
-        error: string;
-        expected?: string[];
-        actual?: string[];
-        suggest?: string;
-      };
+      const failure = { path: hunk.filePath, error: message } as { path: string; error: string; expected?: string[]; actual?: string[]; suggest?: string };
       if (typed.expected && typed.expected.length > 0) failure.expected = typed.expected;
       if (typed.actual && typed.actual.length > 0) failure.actual = typed.actual;
       if (typed.suggest) failure.suggest = typed.suggest;
       summary.failed.push(failure);
     }
   }
-
-  const failedPaths = new Set(summary.failed.map((f) => f.path));
-  if (failedPaths.size > 0) {
+  if (summary.failed.length > 0) {
     for (const filePath of filePathsInPatch) {
       const isLive = summary.live.some((l) => l.path === filePath);
       if (!isLive) {
@@ -479,6 +385,5 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
       }
     }
   }
-
   return summary;
 }

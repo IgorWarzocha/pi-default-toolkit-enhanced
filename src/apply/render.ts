@@ -43,19 +43,7 @@ export function buildNumberedDiff(oldContent: string, newContent: string): strin
 export function formatSummary(summary: ApplySummary): string {
   const lines: string[] = [];
   
-  if (summary.live?.length > 0) {
-    const isError = summary.failed?.length > 0;
-    lines.push(isError ? "CURRENT ANCHORS (USE TO FIX AND RETRY):" : "UPDATED ANCHORS (USE FOR SUBSEQUENT EDITS):");
-    const paths = new Set<string>();
-    for (const live of summary.live) {
-      if (paths.has(live.path)) continue;
-      paths.add(live.path);
-      lines.push(`@ ${live.path}`);
-      for (const line of live.anchors) lines.push(`  ${line}`);
-    }
-    lines.push("");
-  }
-  
+
   const successCount = (summary.created?.length ?? 0) + (summary.edited?.length ?? 0) + (summary.moved?.length ?? 0) + (summary.deleted?.length ?? 0);
   const failedCount = summary.failed?.length ?? 0;
   const title = failedCount === 0
@@ -72,7 +60,20 @@ export function formatSummary(summary: ApplySummary): string {
   if (summary.failed?.length > 0) {
     lines.push("\nFAILURES:");
     for (const failed of summary.failed) {
-      lines.push(`  ! ${failed.path}: ${failed.error}`);
+      const errorLines = failed.error.split("\n");
+      lines.push(`  ! ${failed.path}: ${errorLines[0] ?? ""}`);
+      for (let index = 1; index < errorLines.length; index += 1) {
+        const line = errorLines[index];
+        if (line.trim().length === 0) continue;
+        lines.push(`    ${line}`);
+      }
+      const hasState = failed.error.includes("CURRENT FILE STATE:");
+      if (!hasState && failed.actual && failed.actual.length > 0) {
+        lines.push("    CURRENT FILE STATE:");
+        const limit = Math.min(12, failed.actual.length);
+        for (let index = 0; index < limit; index += 1) lines.push(`      ${failed.actual[index]}`);
+        if (failed.actual.length > limit) lines.push(`      ... (${failed.actual.length - limit} more lines)`);
+      }
       if (failed.suggest) lines.push(`    HINT: ${failed.suggest}`);
     }
   }

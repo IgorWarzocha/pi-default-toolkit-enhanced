@@ -1,5 +1,4 @@
 import type { ApplyNoop, EditFileChunk } from "./types.js";
-import { computeLineHash } from "../shared/hash.js";
 
 const CONFUSABLE_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2212\uFE63\uFF0D]/g;
 
@@ -50,6 +49,25 @@ export function restoreIndentForPairedReplacement(oldLines: string[], newLines: 
     const restored = restoreLeadingIndent(oldLines[i], newLines[i]);
     out[i] = restored;
     if (restored !== newLines[i]) changed = true;
+  }
+  return changed ? out : newLines;
+}
+
+export function restoreIndentFromFirst(oldLines: string[], newLines: string[]): string[] {
+  if (oldLines.length === 0 || newLines.length === 0) return newLines;
+  const template = oldLines.find((line) => line.trim().length > 0) ?? oldLines[0];
+  const templateIndent = leadingWhitespace(template);
+  if (templateIndent.length === 0) return newLines;
+  let changed = false;
+  const out = new Array<string>(newLines.length);
+  for (let i = 0; i < newLines.length; i++) {
+    const line = newLines[i];
+    if (line.length === 0 || leadingWhitespace(line).length > 0) {
+      out[i] = line;
+      continue;
+    }
+    out[i] = templateIndent + line;
+    changed = true;
   }
   return changed ? out : newLines;
 }
@@ -177,30 +195,43 @@ chunk.newLines.splice(idx, 1);
 }
 }
 
+function getRange(chunk: EditFileChunk, drift: number): { start: number; end: number } | null {
+  if (chunk.oldAnchors.length < 2) return null;
+  const firstBase = chunk.oldAnchors[0].line;
+  const lastBase = chunk.oldAnchors[chunk.oldAnchors.length - 1].line;
+  if (firstBase < 1 || lastBase < 1) return null;
+  const first = firstBase + drift;
+  const last = lastBase + drift;
+  if (first < 1 || last < first) return null;
+  const span = last - first + 1;
+  if (span <= chunk.oldAnchors.length) return null;
+  return { start: first - 1, end: last - 1 };
+}
+
 export function computeReplacementsWithHealing(
   originalLines: string[],
   filePath: string,
   chunks: EditFileChunk[],
   noops: ApplyNoop[],
-  locateFn: (lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByHash: Map<string, number>) => number,
+  locateFn: (lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>) => number,
   findContextFn: (lines: string[], context: string, start: number) => number,
   contextErrorFn: (lines: string[], pathText: string, context: string, seed: number) => Error,
   mismatchFn: (lines: string[], pathText: string, chunk: EditFileChunk) => Error,
-  buildUniqueLineByHashFn: (lines: string[]) => Map<string, number>,
+  buildUniqueLineByContentFn: (lines: string[]) => Map<string, number>,
 ): ReplaceOp[] {
-  const uniqueLineByHash = buildUniqueLineByHashFn(originalLines);
+  const uniqueLineByContent = buildUniqueLineByContentFn(originalLines);
   const replacements: ReplaceOp[] = [];
   const explicitlyTouchedLines = new Set<number>();
   for (const chunk of chunks) {
 healChunkOverlaps(chunk);
     for (const anchor of chunk.oldAnchors) {
-      explicitlyTouchedLines.add(anchor.line);
+      if (anchor.line > 0) explicitlyTouchedLines.add(anchor.line);
     }
   }
   let drift = 0;
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
     const chunk = chunks[chunkIdx];
-    const base = chunk.oldAnchors[0] ? chunk.oldAnchors[0].line - 1 : originalLines.length;
+    const base = chunk.oldAnchors[0] && chunk.oldAnchors[0].line > 0 ? chunk.oldAnchors[0].line - 1 : 0;
     const shifted = base + drift;
     let seed = shifted;
     if (chunk.changeContext) {
@@ -209,9 +240,29 @@ healChunkOverlaps(chunk);
       } catch {
       }
     }
+    const range = getRange(chunk, drift);
+    if (range) {
+      if (range.end >= originalLines.length) {
+        throw mismatchFn(originalLines, filePath, chunk);
+      }
+      const firstExpected = chunk.oldLines[0] ?? "";
+      const lastExpected = chunk.oldLines[chunk.oldLines.length - 1] ?? "";
+      const firstActual = originalLines[range.start] ?? "";
+      const lastActual = originalLines[range.end] ?? "";
+      if (!equalsIgnoringWhitespace(firstActual, firstExpected) || !equalsIgnoringWhitespace(lastActual, lastExpected)) {
+        throw mismatchFn(originalLines, filePath, chunk);
+      }
+      const oldLength = range.end - range.start + 1;
+      const rangeOld = originalLines.slice(range.start, range.end + 1);
+      let rangeNew = restoreIndentForPairedReplacement(rangeOld, [...chunk.newLines]);
+      rangeNew = restoreIndentFromFirst(rangeOld, rangeNew);
+      replacements.push({ start: range.start, oldLength, newLines: rangeNew });
+      drift += rangeNew.length - oldLength;
+      continue;
+    }
     let start = seed;
     try {
-      start = locateFn(originalLines, chunk, seed, uniqueLineByHash);
+      start = locateFn(originalLines, chunk, seed, uniqueLineByContent);
     } catch {
       throw mismatchFn(originalLines, filePath, chunk);
     }
@@ -235,6 +286,7 @@ healChunkOverlaps(chunk);
     newLines = stripRangeBoundaryEcho(originalLines, start + 1, start + chunk.oldLines.length, newLines);
     newLines = restoreOldWrappedLines(origLines, newLines);
     newLines = restoreIndentForPairedReplacement(origLines, newLines);
+    newLines = restoreIndentFromFirst(origLines, newLines);
     if (origLines.join("\n") === newLines.join("\n") && origLines.some(l => CONFUSABLE_HYPHENS_RE.test(l))) {
       newLines = normalizeConfusableHyphensInLines(newLines);
     }

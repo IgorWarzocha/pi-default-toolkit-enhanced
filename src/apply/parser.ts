@@ -15,41 +15,11 @@ import { ensureRelativePatchPath } from "./path-utils.js";
 import { InvalidPatchError, InvalidHunkError, type Hunk, type EditFileChunk } from "./types.js";
 
 function sanitizeAddedLine(line: string): string {
-  let next = line;
-  while (/^\d+:[0-9a-f]{2}\|/.test(next)) {
-    next = next.replace(/^\d+:[0-9a-f]{2}\|/, "");
-  }
-  return next;
+  return line;
 }
 
-function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number; hash: string } {
-  const trimmed = body.trimStart();
-  const match = trimmed.match(/^(\d+):([0-9a-f]{2})\|(.*)$/);
-  if (!match) {
-    throw new InvalidHunkError(
-      `INVALID ANCHOR FORMAT: '${body.slice(0, 120)}'` +
-        `\n` +
-        `\nREQUIREMENT: Context (' ') and removal ('-') lines MUST include LINE:HASH| prefix.` +
-        `\nCORRECT FORMAT: '42:ab|content' where 42 is the line number and ab is the hash.` +
-        `\n` +
-        `\nACTION REQUIRED:` +
-        `\n1. Copy anchored lines EXACTLY from the error context above` +
-        `\n2. Use those anchors in your context (' ') and removal ('-') lines` +
-        `\n` +
-        `\nNOTE: If you intend to replace most of the file, you SHOULD use Delete File + Create File.`,
-      lineNumber,
-    );
-  }
-  const rawLine = Number.parseInt(match[1], 10);
-  if (!Number.isFinite(rawLine) || rawLine < 1) {
-    throw new InvalidHunkError(
-      `INVALID LINE NUMBER: '${match[1]}'` +
-        `\nLine numbers MUST be positive integers starting from 1.` +
-        `\nYou MUST use the exact line numbers from the read tool output.`,
-      lineNumber,
-    );
-  }
-  return { line: match[3], lineNumber: rawLine, hash: match[2] };
+function parseAnchoredBody(body: string): { line: string; lineNumber: number } {
+  return { line: body, lineNumber: 0 };
 }
 
 function normalizePatchText(text: string): string {
@@ -279,12 +249,28 @@ function parseEditFileChunk(
 
   let changeContext: string | undefined;
   let startIndex: number;
+  let oldStart = 0;
 
   if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
     startIndex = 1;
   } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
-    changeContext = lines[0].slice(CHANGE_CONTEXT_MARKER.length);
-    startIndex = 1;
+    const raw = lines[0];
+    const gitFull = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
+    if (gitFull) {
+      oldStart = Number.parseInt(gitFull[1], 10);
+      changeContext = gitFull[2];
+      startIndex = 1;
+    } else {
+      const gitOldOnly = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s*@@\s*(.*)$/);
+      if (gitOldOnly) {
+        oldStart = Number.parseInt(gitOldOnly[1], 10);
+        changeContext = gitOldOnly[2];
+        startIndex = 1;
+      } else {
+        changeContext = raw.slice(CHANGE_CONTEXT_MARKER.length);
+        startIndex = 1;
+      }
+    }
   } else {
     startIndex = 0;
   }
@@ -316,10 +302,18 @@ function parseEditFileChunk(
       break;
     }
 
+    if (line.startsWith("*** ")) {
+      break;
+    }
+
+    if (line === EMPTY_CHANGE_CONTEXT_MARKER || line.startsWith(CHANGE_CONTEXT_MARKER)) {
+      if (parsedBodyLines > 0) break;
+    }
+
     if (line.length === 0) {
       if (chunk.oldLines.length > 0 || chunk.newLines.length > 0) {
         const nextLine = lines[startIndex + parsedBodyLines + 1];
-        if (nextLine && nextLine.length > 0) {
+        if (nextLine && nextLine.length > 0 && !nextLine.startsWith("*** ")) {
           chunk.newLines.push("");
           parsedBodyLines += 1;
           continue;
@@ -330,9 +324,9 @@ function parseEditFileChunk(
 
     const prefix = line[0];
     if (prefix === " ") {
-      const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
+      const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, hash: anchored.hash });
+      chunk.oldAnchors.push({ line: anchored.lineNumber });
       chunk.newLines.push(anchored.line);
       parsedBodyLines += 1;
       continue;
@@ -343,21 +337,41 @@ function parseEditFileChunk(
       continue;
     }
     if (prefix === "-") {
-      const anchored = parseAnchoredBody(line.slice(1), lineNumber + startIndex + parsedBodyLines + 1);
+      const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, hash: anchored.hash });
+      chunk.oldAnchors.push({ line: anchored.lineNumber });
       parsedBodyLines += 1;
       continue;
     }
 
-    if (parsedBodyLines === 0) {
+    if (chunk.oldLines.length === 0 && !chunk.changeContext) {
       throw new InvalidHunkError(
-        `Unexpected line in edit hunk: '${line.slice(0, 80)}'.` +
-          `\nEvery line MUST start with ' ' (context), '+' (add), or '-' (remove). You MUST NOT have unprefixed lines.`,
-        lineNumber + 1,
+        `Unexpected unprefixed line in edit hunk: '${line.slice(0, 80)}'.` +
+          `\nUnprefixed additions are allowed only after at least one context/removal line or @@ context.` +
+          `\nYou SHOULD use '+' for additions when no context/removal lines are provided.`,
+        lineNumber + startIndex + parsedBodyLines + 1,
       );
     }
-    break;
+    chunk.newLines.push(line);
+    parsedBodyLines += 1;
+    continue;
   }
+  if (oldStart > 0) {
+    for (let index = 0; index < chunk.oldAnchors.length; index += 1) {
+      if (chunk.oldAnchors[index].line > 0) continue;
+      chunk.oldAnchors[index].line = oldStart + index;
+    }
+    if (chunk.oldAnchors.length === 0) {
+      chunk.oldAnchors.push({ line: oldStart });
+    }
+  }
+
+  if (chunk.oldLines.length === 0 && chunk.changeContext === undefined && chunk.newLines.length > 0) {
+    throw new InvalidHunkError(
+      "Insertion-only hunks MUST provide @@ context for deterministic placement.",
+      lineNumber + startIndex,
+    );
+  }
+
   return { chunk, consumedLines: parsedBodyLines + startIndex };
 }

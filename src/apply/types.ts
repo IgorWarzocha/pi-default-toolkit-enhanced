@@ -19,7 +19,6 @@ export type EditFileChunk = {
 
 export type EditLineAnchor = {
   line: number;
-  hash: string;
 };
 
 export class InvalidPatchError extends Error {}
