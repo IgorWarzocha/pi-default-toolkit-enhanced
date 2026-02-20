@@ -18,28 +18,11 @@ function matchesBashRead(command: string): boolean {
   return false;
 }
 
-function countFiles(value: unknown): number {
-  if (Array.isArray(value)) return value.length;
-  if (typeof value === "object" && value !== null) return 1;
-  if (typeof value !== "string") return 0;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return 0;
-  if ((trimmed.startsWith("[") || trimmed.startsWith("{"))) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (Array.isArray(parsed)) return parsed.length;
-      if (typeof parsed === "object" && parsed !== null) return 1;
-    } catch {
-      return 1;
-    }
-  }
-  return 1;
-}
-
-function isSingleReadInput(input: unknown): boolean {
-  if (typeof input !== "object" || input === null) return false;
-  const record = input as Record<string, unknown>;
-  return countFiles(record.files) === 1;
+function isSingleReadResult(details: unknown): boolean {
+  if (typeof details !== "object" || details === null) return false;
+  const record = details as Record<string, unknown>;
+  if (!Array.isArray(record.files)) return false;
+  return record.files.length === 1;
 }
 
 export function setupReadGuard(pi: ExtensionAPI) {
@@ -64,7 +47,7 @@ export function setupReadGuard(pi: ExtensionAPI) {
       }
     }
 
-    if (event.toolName === "read" && !event.isError && event.input && isSingleReadInput(event.input)) {
+    if (event.toolName === "read" && !event.isError && isSingleReadResult(event.details)) {
       const existing: (TextContent | ImageContent)[] = Array.isArray(event.content) ? event.content : [];
       return {
         content: [...existing, { type: "text" as const, text: `\n${BATCH_NUDGE}` }],
