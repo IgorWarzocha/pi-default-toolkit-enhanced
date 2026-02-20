@@ -7,6 +7,7 @@ import type { Mode } from "./types.js";
 
 function parse(value: string): Mode | undefined {
   if (value === "off") return "off";
+  if (value === "rfc+xml" || value === "rfc_xml" || value === "RFC+XML") return "rfc_xml";
   if (value === "read") return "read";
   if (value === "apply_patch") return "apply_patch";
   if (value === "both") return "both";
@@ -15,7 +16,7 @@ function parse(value: string): Mode | undefined {
 
 export function registerToolkit(pi: ExtensionAPI): void {
   pi.registerCommand("toolkit", {
-    description: "Toolkit mode manager. You MUST pick one mode: off, read, apply_patch, or both. You MAY enable overwrite to force a custom base system prompt.",
+    description: "Toolkit mode manager. You MUST pick one mode: off, RFC+XML, read, apply_patch, or both. You MAY enable overwrite to force a custom base system prompt.",
     handler: async (args, ctx) => {
       const current = await load();
       const arg = args.trim();
@@ -42,7 +43,7 @@ export function registerToolkit(pi: ExtensionAPI): void {
         ctx.ui.notify(`Toolkit updated: mode=${next.mode}, overwrite=${next.overwrite}.`, "info");
         return;
       }
-      const option = await ctx.ui.select("Toolkit mode", ["off", "read", "apply_patch", "both"]);
+      const option = await ctx.ui.select("Toolkit mode", ["off", "RFC+XML", "read", "apply_patch", "both"]);
       if (!option) {
         ctx.ui.notify("Toolkit unchanged.", "info");
         return;

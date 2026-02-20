@@ -18,7 +18,7 @@ export async function load(): Promise<Config> {
     if (!parsed || typeof parsed !== "object") {
       return base();
     }
-    const mode = parsed.mode === "read" || parsed.mode === "apply_patch" || parsed.mode === "both" || parsed.mode === "off" ? parsed.mode : "off";
+    const mode = parsed.mode === "rfc_xml" || parsed.mode === "read" || parsed.mode === "apply_patch" || parsed.mode === "both" || parsed.mode === "off" ? parsed.mode : "off";
     const overwrite = parsed.overwrite === true;
     return { mode, overwrite };
   } catch {

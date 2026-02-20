@@ -2,6 +2,9 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { Mode } from "./types.js";
 
 function pick(mode: Mode): string[] {
+  if (mode === "rfc_xml") {
+    return ["read", "bash", "edit", "write"];
+  }
   if (mode === "read") {
     return ["read", "bash", "edit", "write"];
   }
