@@ -6,7 +6,6 @@ import { resolvePatchPath } from "./path-utils.js";
 import { buildNumberedDiff } from "./render.js";
 import { normalizeLine } from "../shared/normalize.js";
 import { computeReplacementsWithHealing, type ReplaceOp } from "./healing.js";
-import { formatContent } from "./formatter.js";
 
 type AnchorError = Error & {
   expected?: string[];
@@ -113,7 +112,7 @@ function locate(lines: string[], chunk: EditFileChunk, seed: number, uniqueLineB
     throw new Error("EOF chunk did not match file tail.");
   }
   const firstAnchor = chunk.oldAnchors[0];
-  const target = firstAnchor ? seed : 0;
+  const target = firstAnchor && firstAnchor.line > 0 ? seed : 0;
   if (target < 0 || target >= max) throw new Error("Adjusted target is out of bounds.");
   const candidates = spiral(target, max);
   const hits: number[] = [];
@@ -180,6 +179,7 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
   const outOfBounds: number[] = [];
   for (let i = 0; i < chunk.oldAnchors.length; i++) {
     const anchor = chunk.oldAnchors[i];
+    if (anchor.line <= 0) continue;
     const lineIdx = anchor.line - 1;
     if (lineIdx < 0 || lineIdx >= lines.length) {
       outOfBounds.push(anchor.line);
@@ -197,7 +197,7 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
   const expected: string[] = [];
   for (let i = 0; i < chunk.oldLines.length; i++) {
     const anchor = chunk.oldAnchors[i];
-    expected.push(prefixLine(anchor.line, chunk.oldLines[i]));
+    expected.push(anchor.line > 0 ? prefixLine(anchor.line, chunk.oldLines[i]) : chunk.oldLines[i]);
   }
   const messageLines: string[] = [];
   if (outOfBounds.length > 0) {
@@ -207,7 +207,7 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
   }
   if (mismatchSet.size > 0) {
     messageLines.push(`MISMATCH: ${mismatchSet.size} line(s) differ from expectation.`);
-    messageLines.push("CURRENT ANCHORS:");
+    messageLines.push("CURRENT FILE STATE:");
     const contextLines = new Set<number>();
     for (const lineNum of mismatchSet.keys()) {
       for (let i = Math.max(1, lineNum - 2); i <= Math.min(lines.length, lineNum + 2); i++) {
@@ -261,8 +261,7 @@ async function deriveUpdatedContentWithHealing(
   );
   const updatedLines = collapseEmpty(applyReplacements(originalLines, replacements));
   if (updatedLines[updatedLines.length - 1] !== "") updatedLines.push("");
-  let content = updatedLines.join("\n");
-  content = await formatContent(filePath, content);
+  const content = updatedLines.join("\n");
   return { content, anchors: anchorLines(content.split("\n")) };
 }
 

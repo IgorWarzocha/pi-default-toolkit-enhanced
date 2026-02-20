@@ -176,6 +176,19 @@ chunk.newLines.splice(idx, 1);
 }
 }
 
+function getRange(chunk: EditFileChunk, drift: number): { start: number; end: number } | null {
+  if (chunk.oldAnchors.length < 2) return null;
+  const firstBase = chunk.oldAnchors[0].line;
+  const lastBase = chunk.oldAnchors[chunk.oldAnchors.length - 1].line;
+  if (firstBase < 1 || lastBase < 1) return null;
+  const first = firstBase + drift;
+  const last = lastBase + drift;
+  if (first < 1 || last < first) return null;
+  const span = last - first + 1;
+  if (span <= chunk.oldAnchors.length) return null;
+  return { start: first - 1, end: last - 1 };
+}
+
 export function computeReplacementsWithHealing(
   originalLines: string[],
   filePath: string,
@@ -193,13 +206,13 @@ export function computeReplacementsWithHealing(
   for (const chunk of chunks) {
 healChunkOverlaps(chunk);
     for (const anchor of chunk.oldAnchors) {
-      explicitlyTouchedLines.add(anchor.line);
+      if (anchor.line > 0) explicitlyTouchedLines.add(anchor.line);
     }
   }
   let drift = 0;
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
     const chunk = chunks[chunkIdx];
-    const base = chunk.oldAnchors[0] ? chunk.oldAnchors[0].line - 1 : originalLines.length;
+    const base = chunk.oldAnchors[0] && chunk.oldAnchors[0].line > 0 ? chunk.oldAnchors[0].line - 1 : 0;
     const shifted = base + drift;
     let seed = shifted;
     if (chunk.changeContext) {
@@ -207,6 +220,23 @@ healChunkOverlaps(chunk);
         seed = findContextFn(originalLines, chunk.changeContext, Math.max(0, shifted));
       } catch {
       }
+    }
+    const range = getRange(chunk, drift);
+    if (range) {
+      if (range.end >= originalLines.length) {
+        throw mismatchFn(originalLines, filePath, chunk);
+      }
+      const firstExpected = chunk.oldLines[0] ?? "";
+      const lastExpected = chunk.oldLines[chunk.oldLines.length - 1] ?? "";
+      const firstActual = originalLines[range.start] ?? "";
+      const lastActual = originalLines[range.end] ?? "";
+      if (!equalsIgnoringWhitespace(firstActual, firstExpected) || !equalsIgnoringWhitespace(lastActual, lastExpected)) {
+        throw mismatchFn(originalLines, filePath, chunk);
+      }
+      const oldLength = range.end - range.start + 1;
+      replacements.push({ start: range.start, oldLength, newLines: [...chunk.newLines] });
+      drift += chunk.newLines.length - oldLength;
+      continue;
     }
     let start = seed;
     try {

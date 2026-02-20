@@ -43,19 +43,7 @@ export function buildNumberedDiff(oldContent: string, newContent: string): strin
 export function formatSummary(summary: ApplySummary): string {
   const lines: string[] = [];
   
-  if (summary.live?.length > 0) {
-    const isError = summary.failed?.length > 0;
-    lines.push(isError ? "CURRENT ANCHORS (USE TO FIX AND RETRY):" : "UPDATED ANCHORS (USE FOR SUBSEQUENT EDITS):");
-    const paths = new Set<string>();
-    for (const live of summary.live) {
-      if (paths.has(live.path)) continue;
-      paths.add(live.path);
-      lines.push(`@ ${live.path}`);
-      for (const line of live.anchors) lines.push(`  ${line}`);
-    }
-    lines.push("");
-  }
-  
+
   const successCount = (summary.created?.length ?? 0) + (summary.edited?.length ?? 0) + (summary.moved?.length ?? 0) + (summary.deleted?.length ?? 0);
   const failedCount = summary.failed?.length ?? 0;
   const title = failedCount === 0

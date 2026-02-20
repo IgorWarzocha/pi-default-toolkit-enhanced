@@ -9,7 +9,7 @@ export function registerApplyTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "apply_patch",
     label: "apply_patch",
-    description: `Apply file modifications using anchored diffs with automatic Biome formatting. The tool SHALL return updated LINE anchors upon success. You MUST use these returned anchors for all subsequent edits to the same files. You SHALL NOT re-read files after successful application. STRUCTURE: The patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. SECTIONS: Each file modification MUST use one of: '*** Create File: <path>', '*** Edit File: <path>', '*** Delete File: <path>', or '*** Move File: <path>' followed by '*** Move to: <new-path>'. HUNKS: Each Edit File section MAY contain one or more hunks starting with '@@ <context>' for positioning. Body lines: Context (' ') and removal ('-') lines MUST include the exact LINE| anchor from the read tool. Addition ('+') lines MUST NOT include anchors. You MUST batch ALL file changes into a single apply_patch call.`,
+    description: `Apply file modifications from a patch envelope. STRUCTURE: patchText MUST begin with '*** Begin Patch' and end with '*** End Patch'. SECTIONS: each file change MUST use one of: '*** Create File: <path>', '*** Edit File: <path>', '*** Delete File: <path>', or '*** Move File: <path>' plus '*** Move to: <new-path>'. HUNKS: Edit File sections MAY use '@@ <context>' and MAY use either strict prefixed diff lines (' ', '+', '-') or lenient body lines (unprefixed lines are treated as additions). Context/removal lines SHOULD be plain content. Range replacement is supported by providing first and last removal lines. You MUST batch related file changes in one apply_patch call.`,
     renderCall(args, theme) {
       return renderApplyPatchCall(args, parsePatch, theme);
     },
@@ -18,7 +18,7 @@ export function registerApplyTool(pi: ExtensionAPI): void {
     },
     parameters: Type.Object({
       patchText: Type.String({
-        description: "The patch envelope. This parameter MUST be a string starting with exactly '*** Begin Patch' and ending with exactly '*** End Patch'. Inside the envelope: file sections using '*** Create File: <path>', '*** Edit File: <path>', '*** Delete File: <path>', or '*** Move File: <path>'. For Edit File sections: hunk markers '@@ <context>' are OPTIONAL but RECOMMENDED for positioning. Body lines MUST use prefixes: ' ' for context lines with LINE| anchor, '-' for removal lines with LINE| anchor, '+' for addition lines WITHOUT anchors.",
+        description: "Patch envelope text. It MUST start with '*** Begin Patch' and end with '*** End Patch'. Edit hunks MAY use '@@ <context>'. Hunk bodies SHOULD use ' ', '+', '-' prefixes, but unprefixed lines are accepted as additions. Context/removal lines SHOULD be plain content.",
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

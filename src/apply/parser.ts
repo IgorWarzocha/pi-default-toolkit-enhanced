@@ -26,26 +26,16 @@ function parseAnchoredBody(body: string, lineNumber: number): { line: string; li
   const trimmed = body.trimStart();
   const match = trimmed.match(/^(\d+)\|(.*)$/);
   if (!match) {
-    throw new InvalidHunkError(
-      `INVALID ANCHOR FORMAT: '${body.slice(0, 120)}'` +
-        `\n` +
-        `\nREQUIREMENT: Context (' ') and removal ('-') lines MUST include LINE| prefix.` +
-        `\nCORRECT FORMAT: '42|content' where 42 is the line number.` +
-        `\n` +
-        `\nACTION REQUIRED:` +
-        `\n1. Copy anchored lines EXACTLY from the error context above` +
-        `\n2. Use those anchors in your context (' ') and removal ('-') lines` +
-        `\n` +
-        `\nNOTE: If you intend to replace most of the file, you SHOULD use Delete File + Create File.`,
-      lineNumber,
-    );
+    if (trimmed.length === 0) {
+      throw new InvalidHunkError("Context/removal lines MUST NOT be empty.", lineNumber);
+    }
+    return { line: trimmed, lineNumber: 0 };
   }
   const rawLine = Number.parseInt(match[1], 10);
   if (!Number.isFinite(rawLine) || rawLine < 1) {
     throw new InvalidHunkError(
       `INVALID LINE NUMBER: '${match[1]}'` +
-        `\nLine numbers MUST be positive integers starting from 1.` +
-        `\nYou MUST use the exact line numbers from the read tool output.`,
+        `\nLine numbers MUST be positive integers starting from 1.`,
       lineNumber,
     );
   }
@@ -283,7 +273,9 @@ function parseEditFileChunk(
   if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
     startIndex = 1;
   } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
-    changeContext = lines[0].slice(CHANGE_CONTEXT_MARKER.length);
+    const raw = lines[0];
+    const git = raw.match(/^@@\s*-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
+    changeContext = git ? git[1] : raw.slice(CHANGE_CONTEXT_MARKER.length);
     startIndex = 1;
   } else {
     startIndex = 0;
@@ -350,14 +342,9 @@ function parseEditFileChunk(
       continue;
     }
 
-    if (parsedBodyLines === 0) {
-      throw new InvalidHunkError(
-        `Unexpected line in edit hunk: '${line.slice(0, 80)}'.` +
-          `\nEvery line MUST start with ' ' (context), '+' (add), or '-' (remove). You MUST NOT have unprefixed lines.`,
-        lineNumber + 1,
-      );
-    }
-    break;
+    chunk.newLines.push(line);
+    parsedBodyLines += 1;
+    continue;
   }
   return { chunk, consumedLines: parsedBodyLines + startIndex };
 }
