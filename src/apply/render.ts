@@ -60,7 +60,13 @@ export function formatSummary(summary: ApplySummary): string {
   if (summary.failed?.length > 0) {
     lines.push("\nFAILURES:");
     for (const failed of summary.failed) {
-      lines.push(`  ! ${failed.path}: ${failed.error}`);
+      const errorLines = failed.error.split("\n");
+      lines.push(`  ! ${failed.path}: ${errorLines[0] ?? ""}`);
+      for (let index = 1; index < errorLines.length; index += 1) {
+        const line = errorLines[index];
+        if (line.trim().length === 0) continue;
+        lines.push(`    ${line}`);
+      }
       const hasState = failed.error.includes("CURRENT FILE STATE:");
       if (!hasState && failed.actual && failed.actual.length > 0) {
         lines.push("    CURRENT FILE STATE:");
