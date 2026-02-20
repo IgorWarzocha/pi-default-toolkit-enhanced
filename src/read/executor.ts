@@ -31,7 +31,7 @@ function renderLine(file: ReadFileInput, line: number, content: string): string 
 }
 
 function createMatcher(file: ReadFileInput): (line: string) => boolean {
-  if (!file.search) throw new Error("Search query is required.");
+  if (!file.search) throw new Error("Invalid input: search query MUST be provided when search mode is used.");
   const sensitive = file.caseSensitive === true;
   if (file.regex) {
     const pattern = new RegExp(file.search, sensitive ? "" : "i");
@@ -77,7 +77,7 @@ function searchFile(lines: string[], file: ReadFileInput): { output: string[]; m
 
 function readRange(lines: string[], file: ReadFileInput): { output: string[]; truncated: boolean } {
   const start = Math.max(0, (file.offset ?? 1) - 1);
-  if (start >= lines.length) throw new Error(`Offset ${file.offset} is beyond end of file (${lines.length} lines)`);
+  if (start >= lines.length) throw new Error(`Invalid input: offset ${file.offset} is beyond end of file (${lines.length} lines).`);
 
   const implicit = file.limit === undefined && lines.length > 1000 ? 400 : undefined;
   const count = file.limit ?? implicit;
@@ -119,7 +119,7 @@ export async function executeRead(cwd: string, files: ReadFileInput[]) {
       if (files.length > 1) content.push({ type: "text", text: `--- ${file.path} ---` });
 
       if (mime) {
-        if (file.search) throw new Error("Search is not supported for image files.");
+        if (file.search) throw new Error("Invalid input: search MUST NOT be used for image files.");
         content.push({ type: "text", text: `Read image file [${mime}]` });
         content.push({ type: "image", data: buffer.toString("base64"), mimeType: mime });
         details.push({ path: file.path });

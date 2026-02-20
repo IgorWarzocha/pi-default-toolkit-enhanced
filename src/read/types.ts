@@ -2,26 +2,26 @@ import { Type, type Static } from "@sinclair/typebox";
 
 export const ReadFileSchema = Type.Object({
   path: Type.String({
-    description: "REQUIRED. File path to read.",
+    description: "REQUIRED. Path to file. Relative paths are resolved from cwd. Absolute paths are allowed.",
   }),
   offset: Type.Optional(
     Type.Number({
-      description: "OPTIONAL. 1-indexed start line.",
+      description: "OPTIONAL. 1-indexed start line. MUST be >= 1 when provided.",
     }),
   ),
   limit: Type.Optional(
     Type.Number({
-      description: "OPTIONAL. Maximum number of lines to read.",
+      description: "OPTIONAL. Maximum number of lines to read. SHOULD be set for large files.",
     }),
   ),
   search: Type.Optional(
     Type.String({
-      description: "OPTIONAL. In-file search query.",
+      description: "OPTIONAL. Search query. When set, tool SHALL return matches and optional context.",
     }),
   ),
   regex: Type.Optional(
     Type.Boolean({
-      description: "OPTIONAL. Treat search as regex.",
+      description: "OPTIONAL. If true, search MUST be interpreted as regex.",
     }),
   ),
   caseSensitive: Type.Optional(
@@ -46,7 +46,7 @@ export const ReadFileSchema = Type.Object({
   ),
   includeLineNumbers: Type.Optional(
     Type.Boolean({
-      description: "OPTIONAL. Include LINE| prefix per output line. Default false.",
+      description: "OPTIONAL. If true, each output line SHALL be prefixed as LINE|CONTENT. Default false.",
     }),
   ),
 });

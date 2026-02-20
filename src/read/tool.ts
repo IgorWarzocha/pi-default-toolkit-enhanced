@@ -11,14 +11,14 @@ export function registerReadTool(pi: ExtensionAPI) {
     name: "read",
     label: "Read File(s)",
     description:
-      "Read files with efficient plain output by default. You SHOULD batch related files into ONE call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. You MAY set includeLineNumbers=true to emit LINE|CONTENT format when line-addressed context is needed. For files larger than 1000 lines, the tool SHALL apply an implicit 400-line safety limit when limit is omitted. Regex search applies per line. You SHOULD NOT use bash (cat/sed/head) for inspection.",
+      "Read one or more files. Output MUST be plain text by default. You MAY set includeLineNumbers=true to emit LINE|CONTENT. You SHOULD batch related files in one call: [\"a.ts\", \"b.ts\", { path: \"c.ts\", offset: 10, limit: 50 }]. For files over 1000 lines, an implicit 400-line safety limit SHALL apply when limit is omitted. Search SHALL evaluate per line.",
     parameters: Type.Object({
       files: Type.Union([
         Type.String({
-          description: "Single file path (string), a JSON object like { path }, or a JSON array of entries.",
+          description: "Input MUST be one of: file path string, JSON object { path, ... }, or JSON array of entries.",
         }),
         Type.Array(Type.Union([Type.String(), ReadFileSchema]), {
-          description: "Multi-read payload. Each entry MAY include offset, limit, search, regex, and context window options.",
+          description: "Multi-read payload. Each entry MAY include offset, limit, search, regex, caseSensitive, contextBefore, contextAfter, maxMatches, includeLineNumbers.",
         }),
       ]),
     }),
@@ -29,7 +29,7 @@ export function registerReadTool(pi: ExtensionAPI) {
       const files = normalizeInput(params.files);
       if (files.length === 0) {
         return {
-          content: [{ type: "text", text: "Invalid input: no readable files provided." }],
+          content: [{ type: "text", text: "Invalid input: files MUST resolve to at least one readable entry." }],
           isError: true,
           details: { files: [] },
         };
