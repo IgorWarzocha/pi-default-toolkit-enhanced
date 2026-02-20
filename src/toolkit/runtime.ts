@@ -16,6 +16,9 @@ export function prompt(event: BeforeAgentStartEvent, cfg: Config): string {
   if (cfg.mode === "off" && !cfg.overwrite) {
     return event.systemPrompt;
   }
+  if (cfg.mode === "rfc_xml" || cfg.mode === "both") {
+    return compose(cfg.mode);
+  }
   if (cfg.overwrite) {
     return compose(cfg.mode);
   }
