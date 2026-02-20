@@ -6,7 +6,7 @@ const BASH_READ_PATTERNS = [
   /^(?:\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)?sed\b(?=.*(?:^|\s)-n(?:\s|$))(?=.*\bp(?:\s|$|'|"))/, 
 ];
 
-const BASH_NUDGE = "Note: You SHOULD use read for file inspection because it provides multi-file reads, offset/limit, and in-file search with optional line-addressed output. You SHOULD NOT use bash for file inspection when read can access the target files.";
+const BASH_NUDGE = "Note: You SHOULD use read for file inspection because it provides multi-file reads, offset/limit, and in-file search. You SHOULD NOT use bash for file inspection when read can access the target files.";
 const BATCH_NUDGE = "Note: You SHOULD batch related file inspections into one read call (array input) instead of one-file-at-a-time reads.";
 
 function matchesBashRead(command: string): boolean {

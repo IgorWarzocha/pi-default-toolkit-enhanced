@@ -44,11 +44,6 @@ export const ReadFileSchema = Type.Object({
       description: "OPTIONAL. Max matched lines to return.",
     }),
   ),
-  includeLineNumbers: Type.Optional(
-    Type.Boolean({
-      description: "OPTIONAL. If true, each output line SHALL be prefixed as LINE|CONTENT. Default false.",
-    }),
-  ),
 });
 
 export type ReadFileInput = Static<typeof ReadFileSchema>;
