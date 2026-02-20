@@ -1,0 +1,7 @@
+   leading spaces
+trailing spaces   
+        tabs
+
+   
+mixed      tabs      spaces
+

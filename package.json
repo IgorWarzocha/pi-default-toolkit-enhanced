@@ -1,0 +1,19 @@
+{
+  "name": "@howaboua/pi-hash",
+  "version": "1.0.0",
+  "description": "Hashed read and anchored apply_patch tools for Pi",
+  "license": "MIT",
+  "keywords": [
+    "pi-extension",
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "e2e": "bash ./e2e-runner.sh"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+こんにちは世界
+émojis: 🎉🔥💯
+smart "quotes" and em—dashes
+zero​width​joiners
+tabs    and    mixed      spaces
+

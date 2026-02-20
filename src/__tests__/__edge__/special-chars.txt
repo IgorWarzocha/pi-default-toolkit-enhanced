@@ -1,0 +1,6 @@
+line with | pipe
+line with 42abcd| fake hash prefix
+line with 7aaaa| another fake
+}}}
+{{{
+
