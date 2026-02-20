@@ -234,8 +234,10 @@ healChunkOverlaps(chunk);
         throw mismatchFn(originalLines, filePath, chunk);
       }
       const oldLength = range.end - range.start + 1;
-      replacements.push({ start: range.start, oldLength, newLines: [...chunk.newLines] });
-      drift += chunk.newLines.length - oldLength;
+      const rangeOld = originalLines.slice(range.start, range.end + 1);
+      const rangeNew = restoreIndentForPairedReplacement(rangeOld, [...chunk.newLines]);
+      replacements.push({ start: range.start, oldLength, newLines: rangeNew });
+      drift += rangeNew.length - oldLength;
       continue;
     }
     let start = seed;

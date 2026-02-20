@@ -372,6 +372,9 @@ function parseEditFileChunk(
       if (chunk.oldAnchors[index].line > 0) continue;
       chunk.oldAnchors[index].line = oldStart + index;
     }
+    if (chunk.oldAnchors.length === 0) {
+      chunk.oldAnchors.push({ line: oldStart });
+    }
   }
 
   return { chunk, consumedLines: parsedBodyLines + startIndex };
