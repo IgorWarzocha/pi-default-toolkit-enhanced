@@ -61,6 +61,12 @@ export function formatSummary(summary: ApplySummary): string {
     lines.push("\nFAILURES:");
     for (const failed of summary.failed) {
       lines.push(`  ! ${failed.path}: ${failed.error}`);
+      if (failed.actual && failed.actual.length > 0) {
+        lines.push("    CURRENT FILE STATE:");
+        const limit = Math.min(12, failed.actual.length);
+        for (let index = 0; index < limit; index += 1) lines.push(`      ${failed.actual[index]}`);
+        if (failed.actual.length > limit) lines.push(`      ... (${failed.actual.length - limit} more lines)`);
+      }
       if (failed.suggest) lines.push(`    HINT: ${failed.suggest}`);
     }
   }
