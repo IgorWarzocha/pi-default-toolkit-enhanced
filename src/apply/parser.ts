@@ -377,5 +377,12 @@ function parseEditFileChunk(
     }
   }
 
+  if (chunk.oldLines.length === 0 && chunk.changeContext === undefined && chunk.newLines.length > 0) {
+    throw new InvalidHunkError(
+      "Insertion-only hunks MUST provide @@ context for deterministic placement.",
+      lineNumber + startIndex,
+    );
+  }
+
   return { chunk, consumedLines: parsedBodyLines + startIndex };
 }

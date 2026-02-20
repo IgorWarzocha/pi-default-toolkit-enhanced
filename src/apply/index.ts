@@ -187,7 +187,7 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
     }
     if (!linesEqual(lines[lineIdx], chunk.oldLines[i])) mismatchSet.add(anchor.line);
   }
-  const firstLineNum = first.line;
+  const firstLineNum = first.line > 0 ? first.line : 1;
   const contextStart = Math.max(0, firstLineNum - 5);
   const contextEnd = Math.min(lines.length, firstLineNum + 10);
   const sample: string[] = [];
