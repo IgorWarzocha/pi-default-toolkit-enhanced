@@ -17,10 +17,10 @@ export function prompt(event: BeforeAgentStartEvent, cfg: Config): string {
     return event.systemPrompt;
   }
   if (cfg.mode === "rfc_xml" || cfg.mode === "both") {
-    return compose(cfg.mode);
+    return compose(cfg.mode, event.systemPrompt);
   }
   if (cfg.overwrite) {
-    return compose(cfg.mode);
+    return compose(cfg.mode, event.systemPrompt);
   }
   return inject(event.systemPrompt, cfg.mode);
 }
