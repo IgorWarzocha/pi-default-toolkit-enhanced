@@ -226,18 +226,18 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
       prevLine = lineNum;
       const content = lines[lineNum - 1] ?? "";
       const prefix = prefixLine(lineNum, content);
-      if (mismatchSet.has(lineNum)) messageLines.push(`! ${prefix}`);
+      if (mismatchSet.has(lineNum)) messageLines.push(`> ${prefix}`);
       else messageLines.push(`  ${prefix}`);
     }
   }
   if (messageLines.length === 0) {
-    messageLines.push(`ANCHOR ERROR: Failed to locate block at line ${firstLineNum} in ${pathText}.`);
-    messageLines.push("Copy anchors from the CURRENT FILE STATE section above.");
+    messageLines.push(`PATCH ERROR: Failed to locate expected block near line ${firstLineNum} in ${pathText}.`);
+    messageLines.push("Copy exact lines from the CURRENT FILE STATE section above.");
   }
   const error = new Error(`PATCH FAILED: ${pathText}\n` + messageLines.join("\n")) as AnchorError;
   error.expected = expected;
   error.actual = sample;
-  error.suggest = `Use anchors from the CURRENT FILE STATE section above.`;
+  error.suggest = `Use exact lines from the CURRENT FILE STATE section above.`;
   return error;
 }
 

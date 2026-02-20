@@ -53,6 +53,25 @@ export function restoreIndentForPairedReplacement(oldLines: string[], newLines: 
   return changed ? out : newLines;
 }
 
+export function restoreIndentFromFirst(oldLines: string[], newLines: string[]): string[] {
+  if (oldLines.length === 0 || newLines.length === 0) return newLines;
+  const template = oldLines.find((line) => line.trim().length > 0) ?? oldLines[0];
+  const templateIndent = leadingWhitespace(template);
+  if (templateIndent.length === 0) return newLines;
+  let changed = false;
+  const out = new Array<string>(newLines.length);
+  for (let i = 0; i < newLines.length; i++) {
+    const line = newLines[i];
+    if (line.length === 0 || leadingWhitespace(line).length > 0) {
+      out[i] = line;
+      continue;
+    }
+    out[i] = templateIndent + line;
+    changed = true;
+  }
+  return changed ? out : newLines;
+}
+
 export function restoreOldWrappedLines(oldLines: string[], newLines: string[]): string[] {
   if (oldLines.length === 0 || newLines.length < 2) return newLines;
   const canonToOld = new Map<string, { line: string; count: number }>();
@@ -235,7 +254,8 @@ healChunkOverlaps(chunk);
       }
       const oldLength = range.end - range.start + 1;
       const rangeOld = originalLines.slice(range.start, range.end + 1);
-      const rangeNew = restoreIndentForPairedReplacement(rangeOld, [...chunk.newLines]);
+      let rangeNew = restoreIndentForPairedReplacement(rangeOld, [...chunk.newLines]);
+      rangeNew = restoreIndentFromFirst(rangeOld, rangeNew);
       replacements.push({ start: range.start, oldLength, newLines: rangeNew });
       drift += rangeNew.length - oldLength;
       continue;
@@ -266,6 +286,7 @@ healChunkOverlaps(chunk);
     newLines = stripRangeBoundaryEcho(originalLines, start + 1, start + chunk.oldLines.length, newLines);
     newLines = restoreOldWrappedLines(origLines, newLines);
     newLines = restoreIndentForPairedReplacement(origLines, newLines);
+    newLines = restoreIndentFromFirst(origLines, newLines);
     if (origLines.join("\n") === newLines.join("\n") && origLines.some(l => CONFUSABLE_HYPHENS_RE.test(l))) {
       newLines = normalizeConfusableHyphensInLines(newLines);
     }

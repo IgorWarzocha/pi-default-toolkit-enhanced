@@ -23,7 +23,7 @@ function sanitizeAddedLine(line: string): string {
 }
 
 function parseAnchoredBody(body: string, lineNumber: number): { line: string; lineNumber: number } {
-  const match = body.trimStart().match(/^(\d+)\|(.*)$/);
+  const match = body.match(/^\s*(\d+)\|(.*)$/);
   if (!match) {
     if (body.length === 0) {
       throw new InvalidHunkError("Context/removal lines MUST NOT be empty.", lineNumber);
