@@ -1,11 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { Hunk, EditFileChunk, ApplySummary } from "./types.js";
+import type { Hunk, EditFileChunk, ApplySummary, ApplyHunkResult } from "./types.js";
 import type { ApplyNoop } from "./types.js";
 import { resolvePatchPath } from "./path-utils.js";
 import { buildNumberedDiff } from "./render.js";
 import { normalizeLine } from "../shared/normalize.js";
-import { computeReplacementsWithHealing, type ReplaceOp } from "./healing.js";
+import { computeReplacementsWithHealing, type ReplaceOp, type HealOptions, type LocateResult } from "./healing.js";
 
 type AnchorError = Error & {
   expected?: string[];
@@ -13,8 +13,18 @@ type AnchorError = Error & {
   suggest?: string;
 };
 
+const DEFAULT_HEAL_OPTIONS: HealOptions = {
+  offsetWindow: 100,
+  globalScan: true,
+  fuzz: 1,
+};
+
 function sanitizeContext(context: string): string {
   return context.replace(/^\s*\d+:\s*/, "").replace(/^\s*\d+\|/, "");
+}
+
+function normalizeIndent(line: string): string {
+  return line.replace(/\t/g, "    ").replace(/ {2,}/g, " ").trimEnd();
 }
 
 function prefixLine(line: number, content: string): string {
@@ -25,9 +35,18 @@ function findContext(lines: string[], context: string, start: number): number {
   const target = sanitizeContext(context);
   let index = Math.max(0, start);
   while (index < lines.length) {
-    if (normalizeLine(lines[index], false) === normalizeLine(target, false)) return index;
+    if (lines[index] === target) return index;
     index += 1;
   }
+  const soft: number[] = [];
+  index = Math.max(0, start);
+  const softTarget = normalizeIndent(target);
+  while (index < lines.length) {
+    if (normalizeIndent(lines[index]) === softTarget) soft.push(index);
+    index += 1;
+  }
+  if (soft.length === 1) return soft[0];
+  if (soft.length > 1) throw new Error("AMBIGUOUS MATCH: You MUST provide more specific @@ context lines.");
   throw new Error(`Failed to find context '${target}'.`);
 }
 
@@ -58,36 +77,61 @@ function contextError(lines: string[], pathText: string, context: string, seed: 
   return error;
 }
 
-function linesEqual(fileLine: string, expected: string): boolean {
-  return normalizeLine(fileLine, false) === normalizeLine(expected, false);
+function linesEqual(fileLine: string, expected: string, soft: boolean): boolean {
+  if (!soft) return fileLine === expected;
+  return normalizeIndent(fileLine) === normalizeIndent(expected);
 }
 
-function matchChunkAt(lines: string[], chunk: EditFileChunk, start: number): boolean {
+function matchChunkAt(lines: string[], chunk: EditFileChunk, start: number, soft: boolean): boolean {
   if (chunk.oldLines.length === 0) return true;
   if (start < 0 || start + chunk.oldLines.length > lines.length) return false;
   let index = 0;
   while (index < chunk.oldLines.length) {
-    if (!linesEqual(lines[start + index], chunk.oldLines[index])) return false;
+    if (!linesEqual(lines[start + index], chunk.oldLines[index], soft)) return false;
     index += 1;
   }
   return true;
 }
 
-function spiral(seed: number, max: number): number[] {
-  const out: number[] = [];
-  if (seed >= 0 && seed < max) out.push(seed);
-  let delta = 1;
-  while (delta <= 100) {
-    const up = seed + delta;
-    const down = seed - delta;
-    if (up >= 0 && up < max) out.push(up);
-    if (down >= 0 && down < max) out.push(down);
-    delta += 1;
-  }
-  return out;
+function clampSeed(seed: number, max: number): number {
+  if (max <= 0) return 0;
+  if (seed < 0) return 0;
+  if (seed >= max) return max - 1;
+  return seed;
 }
 
-function buildUniqueLineByContent(lines: string[]): Map<string, number> {
+function collectWindowCandidates(lines: string[], chunk: EditFileChunk, target: number, max: number, soft: boolean, window: number): number[] {
+  const hits: number[] = [];
+  if (matchChunkAt(lines, chunk, target, soft)) hits.push(target);
+  for (let delta = 1; delta <= window; delta++) {
+    const down = target - delta;
+    const up = target + delta;
+    if (down >= 0 && down < max && matchChunkAt(lines, chunk, down, soft)) hits.push(down);
+    if (up >= 0 && up < max && matchChunkAt(lines, chunk, up, soft)) hits.push(up);
+  }
+  hits.sort((lhs, rhs) => lhs - rhs);
+  return hits;
+}
+
+function collectGlobalCandidates(lines: string[], chunk: EditFileChunk, max: number, soft: boolean): number[] {
+  const hits: number[] = [];
+  for (let index = 0; index < max; index++) {
+    if (matchChunkAt(lines, chunk, index, soft)) hits.push(index);
+  }
+  return hits;
+}
+
+function resolveCandidate(hits: number[], target: number, fuzzUsed: number): LocateResult {
+  if (hits.length === 0) throw new Error("No anchor match found.");
+  if (hits.length > 1) {
+    const lines = hits.map((line) => `${line + 1}`).join(", ");
+    throw new Error(`AmbiguousApplyError: Non-unique candidate anchors at lines ${lines}.`);
+  }
+  const start = hits[0];
+  return { start, relocatedBy: start - target, fuzzUsed };
+}
+
+export function buildUniqueLineByContent(lines: string[]): Map<string, number> {
   const uniqueLineByContent = new Map<string, number>();
   const seenDuplicate = new Set<string>();
   for (let i = 0; i < lines.length; i++) {
@@ -103,35 +147,53 @@ function buildUniqueLineByContent(lines: string[]): Map<string, number> {
   return uniqueLineByContent;
 }
 
-function locate(lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>): number {
-  if (chunk.oldLines.length === 0) return Math.max(0, Math.min(seed, lines.length));
+export function locate(lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>, options: HealOptions): LocateResult {
+  if (chunk.oldLines.length === 0) {
+    const start = Math.max(0, Math.min(seed, lines.length));
+    return { start, relocatedBy: 0, fuzzUsed: 0 };
+  }
   const max = Math.max(0, lines.length - chunk.oldLines.length + 1);
   if (chunk.isEndOfFile) {
     const eofStart = lines.length - chunk.oldLines.length;
-    if (matchChunkAt(lines, chunk, eofStart)) return eofStart;
+    if (matchChunkAt(lines, chunk, eofStart, false)) return { start: eofStart, relocatedBy: eofStart - seed, fuzzUsed: 0 };
+    if (options.fuzz > 0 && matchChunkAt(lines, chunk, eofStart, true)) return { start: eofStart, relocatedBy: eofStart - seed, fuzzUsed: 1 };
     throw new Error("EOF chunk did not match file tail.");
   }
   const firstAnchor = chunk.oldAnchors[0];
-  const target = firstAnchor && firstAnchor.line > 0 ? seed : 0;
-  if (target < 0 || target >= max) throw new Error("Adjusted target is out of bounds.");
-  const candidates = spiral(target, max);
-  const hits: number[] = [];
-  for (const candidate of candidates) {
-    if (matchChunkAt(lines, chunk, candidate)) hits.push(candidate);
-  }
-  if (hits.length === 0) {
-    const first = chunk.oldLines[0];
-    if (first) {
-      const relocated = uniqueLineByContent.get(normalizeLine(first, false));
-      if (relocated !== undefined && matchChunkAt(lines, chunk, relocated - 1)) return relocated - 1;
+  const targetBase = firstAnchor && firstAnchor.line > 0 ? seed : 0;
+  const target = clampSeed(targetBase, max);
+  const exactWindow = collectWindowCandidates(lines, chunk, target, max, false, options.offsetWindow);
+  if (exactWindow.length === 1) return resolveCandidate(exactWindow, target, 0);
+  if (exactWindow.length > 1) return resolveCandidate(exactWindow, target, 0);
+  const first = chunk.oldLines[0];
+  if (first) {
+    const relocated = uniqueLineByContent.get(normalizeLine(first, false));
+    if (relocated !== undefined) {
+      const candidate = relocated - 1;
+      if (candidate >= 0 && candidate < max && matchChunkAt(lines, chunk, candidate, false)) {
+        return { start: candidate, relocatedBy: candidate - target, fuzzUsed: 0 };
+      }
+      if (options.fuzz > 0 && candidate >= 0 && candidate < max && matchChunkAt(lines, chunk, candidate, true)) {
+        return { start: candidate, relocatedBy: candidate - target, fuzzUsed: 1 };
+      }
     }
-    throw new Error("No anchor match found in +/-100 spiral window.");
   }
-  const best = hits[0];
-  const bestDistance = Math.abs(best - target);
-  const tie = hits.find((value, index) => index > 0 && Math.abs(value - target) === bestDistance);
-  if (tie !== undefined) throw new Error(`Equidistant anchor collision at lines ${best + 1} and ${tie + 1}.`);
-  return best;
+  if (options.globalScan) {
+    const globalExact = collectGlobalCandidates(lines, chunk, max, false);
+    if (globalExact.length === 1) return resolveCandidate(globalExact, target, 0);
+    if (globalExact.length > 1) return resolveCandidate(globalExact, target, 0);
+  }
+  if (options.fuzz > 0) {
+    const softWindow = collectWindowCandidates(lines, chunk, target, max, true, options.offsetWindow);
+    if (softWindow.length === 1) return resolveCandidate(softWindow, target, 1);
+    if (softWindow.length > 1) return resolveCandidate(softWindow, target, 1);
+    if (options.globalScan) {
+      const globalSoft = collectGlobalCandidates(lines, chunk, max, true);
+      if (globalSoft.length === 1) return resolveCandidate(globalSoft, target, 1);
+      if (globalSoft.length > 1) return resolveCandidate(globalSoft, target, 1);
+    }
+  }
+  throw new Error("No anchor match found in configured healing search space.");
 }
 
 function applyReplacements(sourceLines: string[], replacements: ReplaceOp[]): string[] {
@@ -185,9 +247,27 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
       outOfBounds.push(anchor.line);
       continue;
     }
-    if (!linesEqual(lines[lineIdx], chunk.oldLines[i])) mismatchSet.add(anchor.line);
+    if (!linesEqual(lines[lineIdx], chunk.oldLines[i], false)) mismatchSet.add(anchor.line);
   }
-  const firstLineNum = first.line > 0 ? first.line : 1;
+
+  let firstLineNum = first.line > 0 ? first.line : 0;
+  if (firstLineNum <= 0 && chunk.oldLines.length > 0) {
+    const firstOld = chunk.oldLines[0];
+    const exact: number[] = [];
+    const soft: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] === firstOld) exact.push(i + 1);
+      if (normalizeIndent(lines[i]) === normalizeIndent(firstOld)) soft.push(i + 1);
+    }
+    if (exact.length === 1) {
+      firstLineNum = exact[0];
+    } else if (soft.length === 1) {
+      firstLineNum = soft[0];
+    } else {
+      firstLineNum = 1;
+    }
+  }
+
   const contextStart = Math.max(0, firstLineNum - 5);
   const contextEnd = Math.min(lines.length, firstLineNum + 10);
   const sample: string[] = [];
@@ -207,6 +287,18 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
   }
   if (mismatchSet.size > 0) {
     messageLines.push(`MISMATCH: ${mismatchSet.size} line(s) differ from expectation.`);
+    for (const lineNum of [...mismatchSet].sort((a, b) => a - b)) {
+      const anchorIndex = chunk.oldAnchors.findIndex((anchor) => anchor.line === lineNum);
+      const expectedLine = anchorIndex >= 0 ? (chunk.oldLines[anchorIndex] ?? "") : "";
+      const actualLine = lines[lineNum - 1] ?? "";
+      messageLines.push(`EXPECTED ${lineNum}: ${expectedLine}`);
+      messageLines.push(`FOUND    ${lineNum}: ${actualLine}`);
+      const normalizedExpected = normalizeLine(expectedLine, false);
+      const normalizedActual = normalizeLine(actualLine, false);
+      if (normalizedExpected === normalizedActual && expectedLine !== actualLine) {
+        messageLines.push(`WHITESPACE MISMATCH at line ${lineNum}: content matches after normalization.`);
+      }
+    }
     messageLines.push("CURRENT FILE STATE:");
     const contextLines = new Set<number>();
     for (const lineNum of mismatchSet.keys()) {
@@ -231,8 +323,9 @@ function mismatch(lines: string[], pathText: string, chunk: EditFileChunk): Anch
     }
   }
   if (messageLines.length === 0) {
-    messageLines.push(`PATCH ERROR: Failed to locate expected block near line ${firstLineNum} in ${pathText}.`);
-    messageLines.push("Copy exact lines from the CURRENT FILE STATE section above.");
+    messageLines.push(`PATCH ERROR: Failed to locate the expected block in ${pathText}.`);
+    messageLines.push(`LAST TARGET LINE: ${firstLineNum}`);
+    messageLines.push("You MUST copy exact lines from CURRENT FILE STATE.");
   }
   const error = new Error(`PATCH FAILED:\n` + messageLines.join("\n")) as AnchorError;
   error.expected = expected;
@@ -246,6 +339,8 @@ async function deriveUpdatedContentWithHealing(
   filePath: string,
   chunks: EditFileChunk[],
   noops: ApplyNoop[],
+  hunkResults: ApplyHunkResult[],
+  options: HealOptions,
 ): Promise<{ content: string; anchors: string[] }> {
   const originalLines = originalContent.split("\n");
   const replacements = computeReplacementsWithHealing(
@@ -253,6 +348,8 @@ async function deriveUpdatedContentWithHealing(
     filePath,
     chunks,
     noops,
+    hunkResults,
+    options,
     locate,
     findContext,
     contextError,
@@ -279,7 +376,7 @@ function upsertLive(summary: ApplySummary, pathText: string, anchors: string[]):
 
 export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySummary> {
   if (hunks.length === 0) throw new Error("No files were modified. You MUST include at least one file section in the patch.");
-  const summary: ApplySummary = { created: [], edited: [], moved: [], deleted: [], failed: [], live: [], fileDiffs: [], noops: [] };
+  const summary: ApplySummary = { created: [], edited: [], moved: [], deleted: [], failed: [], live: [], fileDiffs: [], noops: [], hunkResults: [] };
   const filePathsInPatch = new Set<string>();
   for (const hunk of hunks) {
     filePathsInPatch.add(hunk.filePath);
@@ -336,7 +433,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
       }
       const source = resolvePatchPath(cwd, hunk.filePath);
       const originalContent = await fs.readFile(source, "utf-8");
-      const next = await deriveUpdatedContentWithHealing(originalContent, source, hunk.chunks, summary.noops);
+      const next = await deriveUpdatedContentWithHealing(originalContent, source, hunk.chunks, summary.noops, summary.hunkResults, DEFAULT_HEAL_OPTIONS);
       const diff = buildNumberedDiff(originalContent, next.content);
       if (hunk.moveToPath) {
         const destination = resolvePatchPath(cwd, hunk.moveToPath);

@@ -47,6 +47,7 @@ export type ApplySummary = {
   live: ApplyLive[];
   fileDiffs: ApplyFileDiff[];
   noops: ApplyNoop[];
+  hunkResults: ApplyHunkResult[];
 };
 
 export type ApplyFailure = {
@@ -66,4 +67,12 @@ export type ApplyNoop = {
   path: string;
   line: number;
   reason: string;
+};
+
+export type ApplyHunkResult = {
+  path: string;
+  hunk: number;
+  status: "applied" | "already_applied" | "rejected";
+  relocatedBy: number;
+  fuzzUsed: number;
 };
