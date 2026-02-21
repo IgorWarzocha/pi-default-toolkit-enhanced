@@ -1,0 +1,3 @@
+This is a newly created file
+demonstrating the Create operation
+in apply_patch

@@ -1,22 +1,10 @@
 import type { ApplyHunkResult, ApplyNoop, EditFileChunk } from "./types.js";
+import { normalizeIndent } from "../shared/normalize.js";
 
 const CONFUSABLE_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2212\uFE63\uFF0D]/g;
 
-export function equalsIgnoringWhitespace(a: string, b: string): boolean {
-  if (a === b) return true;
-  return a.replace(/\s+/g, "") === b.replace(/\s+/g, "");
-}
-
 export function stripAllWhitespace(s: string): string {
   return s.replace(/\s+/g, "");
-}
-
-export function stripTrailingContinuationTokens(s: string): string {
-  return s.replace(/(?:&&|\|\||\?\?|\?|:|=|,|\+|-|\*|\/|\.|\()\s*$/u, "");
-}
-
-export function stripMergeOperatorChars(s: string): string {
-  return s.replace(/[|&?]/g, "");
 }
 
 export function leadingWhitespace(s: string): string {
@@ -35,10 +23,6 @@ export function restoreLeadingIndent(templateLine: string, line: string): string
 
 export function normalizeConfusableHyphens(s: string): string {
   return s.replace(CONFUSABLE_HYPHENS_RE, "-");
-}
-
-export function normalizeConfusableHyphensInLines(lines: string[]): string[] {
-  return lines.map(l => normalizeConfusableHyphens(l));
 }
 
 export function restoreIndentForPairedReplacement(oldLines: string[], newLines: string[]): string[] {
@@ -72,99 +56,6 @@ export function restoreIndentFromFirst(oldLines: string[], newLines: string[]): 
   return changed ? out : newLines;
 }
 
-export function restoreOldWrappedLines(oldLines: string[], newLines: string[]): string[] {
-  if (oldLines.length === 0 || newLines.length < 2) return newLines;
-  const canonToOld = new Map<string, { line: string; count: number }>();
-  for (const line of oldLines) {
-    const canon = stripAllWhitespace(line);
-    const bucket = canonToOld.get(canon);
-    if (bucket) bucket.count++;
-    else canonToOld.set(canon, { line, count: 1 });
-  }
-  const candidates: { start: number; len: number; replacement: string; canon: string }[] = [];
-  for (let start = 0; start < newLines.length; start++) {
-    for (let len = 2; len <= 10 && start + len <= newLines.length; len++) {
-      const canonSpan = stripAllWhitespace(newLines.slice(start, start + len).join(""));
-      const old = canonToOld.get(canonSpan);
-      if (old && old.count === 1 && canonSpan.length >= 6) {
-        candidates.push({ start, len, replacement: old.line, canon: canonSpan });
-      }
-    }
-  }
-  if (candidates.length === 0) return newLines;
-  const canonCounts = new Map<string, number>();
-  for (const c of candidates) {
-    canonCounts.set(c.canon, (canonCounts.get(c.canon) ?? 0) + 1);
-  }
-  const uniqueCandidates = candidates.filter(c => (canonCounts.get(c.canon) ?? 0) === 1);
-  if (uniqueCandidates.length === 0) return newLines;
-  uniqueCandidates.sort((a, b) => b.start - a.start);
-  const out = [...newLines];
-  for (const c of uniqueCandidates) {
-    out.splice(c.start, c.len, c.replacement);
-  }
-  return out;
-}
-
-export function stripRangeBoundaryEcho(fileLines: string[], startLine: number, endLine: number, dstLines: string[]): string[] {
-  const count = endLine - startLine + 1;
-  if (dstLines.length <= 1 || dstLines.length <= count) return dstLines;
-  let out = dstLines;
-  const beforeIdx = startLine - 2;
-  if (beforeIdx >= 0 && equalsIgnoringWhitespace(out[0], fileLines[beforeIdx])) {
-    out = out.slice(1);
-  }
-  const afterIdx = endLine;
-  if (afterIdx < fileLines.length && out.length > 0 && equalsIgnoringWhitespace(out[out.length - 1], fileLines[afterIdx])) {
-    out = out.slice(0, -1);
-  }
-  return out;
-}
-
-export function maybeExpandSingleLineMerge(
-  fileLines: string[],
-  line: number,
-  dst: string[],
-  explicitlyTouchedLines: Set<number>,
-): { startLine: number; deleteCount: number; newLines: string[] } | null {
-  if (dst.length !== 1) return null;
-  if (line < 1 || line > fileLines.length) return null;
-  const newLine = dst[0];
-  const newCanon = stripAllWhitespace(newLine);
-  const newCanonForMergeOps = stripMergeOperatorChars(newCanon);
-  if (newCanon.length === 0) return null;
-  const orig = fileLines[line - 1];
-  const origCanon = stripAllWhitespace(orig);
-  const origCanonForMatch = stripTrailingContinuationTokens(origCanon);
-  const origCanonForMergeOps = stripMergeOperatorChars(origCanon);
-  const origLooksLikeContinuation = origCanonForMatch.length < origCanon.length;
-  if (origCanon.length === 0) return null;
-  const nextIdx = line;
-  const prevIdx = line - 2;
-  if (origLooksLikeContinuation && nextIdx < fileLines.length && !explicitlyTouchedLines.has(line + 1)) {
-    const next = fileLines[nextIdx];
-    const nextCanon = stripAllWhitespace(next);
-    const a = newCanon.indexOf(origCanonForMatch);
-    const b = newCanon.indexOf(nextCanon);
-    if (a !== -1 && b !== -1 && a < b && newCanon.length <= origCanon.length + nextCanon.length + 32) {
-      return { startLine: line, deleteCount: 2, newLines: [newLine] };
-    }
-  }
-  if (prevIdx >= 0 && !explicitlyTouchedLines.has(line - 1)) {
-    const prev = fileLines[prevIdx];
-    const prevCanon = stripAllWhitespace(prev);
-    const prevCanonForMatch = stripTrailingContinuationTokens(prevCanon);
-    const prevLooksLikeContinuation = prevCanonForMatch.length < prevCanon.length;
-    if (!prevLooksLikeContinuation) return null;
-    const a = newCanonForMergeOps.indexOf(stripMergeOperatorChars(prevCanonForMatch));
-    const b = newCanonForMergeOps.indexOf(origCanonForMergeOps);
-    if (a !== -1 && b !== -1 && a < b && newCanon.length <= prevCanon.length + origCanon.length + 32) {
-      return { startLine: line - 1, deleteCount: 2, newLines: [newLine] };
-    }
-  }
-  return null;
-}
-
 export type ReplaceOp = {
   start: number;
   oldLength: number;
@@ -185,30 +76,6 @@ export type LocateResult = {
   fuzzUsed: number;
 };
 
-export function healChunkOverlaps(chunk: EditFileChunk): void {
-const removalLines = new Set<number>();
-const contextIndices = new Map<number, number>();
-for (let i = 0; i < chunk.oldAnchors.length; i++) {
-const anchor = chunk.oldAnchors[i];
-if (i < chunk.newLines.length && chunk.oldLines[i] === chunk.newLines[i]) {
-contextIndices.set(anchor.line, i);
-} else {
-removalLines.add(anchor.line);
-}
-}
-const toRemove: number[] = [];
-for (const lineNum of removalLines) {
-const idx = contextIndices.get(lineNum);
-if (idx !== undefined) toRemove.push(idx);
-}
-toRemove.sort((a, b) => b - a);
-for (const idx of toRemove) {
-chunk.oldLines.splice(idx, 1);
-chunk.oldAnchors.splice(idx, 1);
-chunk.newLines.splice(idx, 1);
-}
-}
-
 function getRange(chunk: EditFileChunk, drift: number): { start: number; end: number } | null {
   if (chunk.oldAnchors.length < 2) return null;
   const firstBase = chunk.oldAnchors[0].line;
@@ -226,7 +93,7 @@ function matchesAt(lines: string[], start: number, block: string[]): boolean {
   if (start < 0) return false;
   if (start + block.length > lines.length) return false;
   for (let index = 0; index < block.length; index++) {
-    if (!equalsIgnoringWhitespace(lines[start + index], block[index])) return false;
+    if (normalizeIndent(lines[start + index]) !== normalizeIndent(block[index])) return false;
   }
   return true;
 }
@@ -301,7 +168,7 @@ export function computeReplacementsWithHealing(
       const lastExpected = chunk.oldLines[chunk.oldLines.length - 1] ?? "";
       const firstActual = originalLines[range.start] ?? "";
       const lastActual = originalLines[range.end] ?? "";
-      if (!equalsIgnoringWhitespace(firstActual, firstExpected) || !equalsIgnoringWhitespace(lastActual, lastExpected)) {
+      if (normalizeIndent(firstActual) !== normalizeIndent(firstExpected) || normalizeIndent(lastActual) !== normalizeIndent(lastExpected)) {
         throw mismatchFn(originalLines, filePath, chunk);
       }
       const oldLength = range.end - range.start + 1;
@@ -328,7 +195,27 @@ export function computeReplacementsWithHealing(
     }
     const start = locate.start;
     const origLines = originalLines.slice(start, start + chunk.oldLines.length);
-    const newLines = [...chunk.newLines];
+    let newLines = [...chunk.newLines];
+
+    if (locate.fuzzUsed > 0) {
+      // Context lines (same stripped content in old and new): use file's exact bytes
+      for (let i = 0; i < newLines.length; i++) {
+        if (i < chunk.oldLines.length
+            && i < origLines.length
+            && stripAllWhitespace(chunk.oldLines[i]) === stripAllWhitespace(newLines[i])) {
+          newLines[i] = origLines[i];
+        }
+      }
+      // Non-context lines: attempt paired indent restoration
+      const restored = restoreIndentForPairedReplacement(origLines, newLines);
+      if (restored !== newLines) {
+        newLines = restored;
+      } else {
+        // Fallback: inherit indent from first matched line
+        newLines = restoreIndentFromFirst(origLines, newLines);
+      }
+    }
+
     if (origLines.join("\n") === newLines.join("\n")) {
       noops.push({ path: filePath, line: start + 1, reason: "Replacement identical to current content" });
       hunkResults.push({ path: filePath, hunk: chunkIdx + 1, status: "already_applied", relocatedBy: locate.relocatedBy, fuzzUsed: locate.fuzzUsed });

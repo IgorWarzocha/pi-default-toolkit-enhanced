@@ -14,8 +14,16 @@ export const appInfo = {
 
 export const features = {
   historyEnabled: true,
-  scientificMode: false,
+  scientificMode: true,
   primeChecking: true,
   factorialEnabled: true,
-  complexOperations: false
+  complexOperations: false,
+  clampEnabled: true,
+  primeGeneration: true
+};
+
+export const limits = {
+  maxFactorial: 170,
+  maxPrimeSearch: 10000,
+  historySize: 100
 };

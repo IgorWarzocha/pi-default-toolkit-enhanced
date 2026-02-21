@@ -8,16 +8,10 @@ import {
 import { ensureRelativePatchPath } from "./path-utils.js";
 import { InvalidPatchError, InvalidHunkError, type Hunk, type EditFileChunk } from "./types.js";
 
+const CONFUSABLE_HYPHEN_PREFIX = new Set(["\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212", "\uFE63", "\uFF0D"]);
+
 function sanitizeAddedLine(line: string): string {
   return line;
-}
-
-function parseAnchoredBody(body: string): { line: string; lineNumber: number } {
-  const match = body.match(/^\s*(\d+)\s*[:|]\s?(.*)$/);
-  if (!match) return { line: body, lineNumber: 0 };
-  const lineNumber = Number.parseInt(match[1], 10);
-  const line = match[2] ?? "";
-  return { line, lineNumber: Number.isFinite(lineNumber) ? lineNumber : 0 };
 }
 
 function normalizePatchText(text: string): string {
@@ -438,24 +432,26 @@ function parseEditFileChunk(
       break;
     }
 
-    const prefix = line[0];
+    // Normalize confusable hyphens in prefix position only
+    const effectiveLine = line.length > 0 && CONFUSABLE_HYPHEN_PREFIX.has(line[0])
+      ? "-" + line.slice(1)
+      : line;
+    const prefix = effectiveLine[0];
     if (prefix === " ") {
-      const anchored = parseAnchoredBody(line.slice(1));
-      chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, offset: lineNumber + startIndex + parsedBodyLines });
-      chunk.newLines.push(anchored.line);
+      chunk.oldLines.push(effectiveLine.slice(1));
+      chunk.oldAnchors.push({ line: 0, offset: lineNumber + startIndex + parsedBodyLines });
+      chunk.newLines.push(effectiveLine.slice(1));
       parsedBodyLines += 1;
       continue;
     }
     if (prefix === "+") {
-      chunk.newLines.push(sanitizeAddedLine(line.slice(1)));
+      chunk.newLines.push(sanitizeAddedLine(effectiveLine.slice(1)));
       parsedBodyLines += 1;
       continue;
     }
     if (prefix === "-") {
-      const anchored = parseAnchoredBody(line.slice(1));
-      chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber, offset: lineNumber + startIndex + parsedBodyLines });
+      chunk.oldLines.push(effectiveLine.slice(1));
+      chunk.oldAnchors.push({ line: 0, offset: lineNumber + startIndex + parsedBodyLines });
       parsedBodyLines += 1;
       continue;
     }

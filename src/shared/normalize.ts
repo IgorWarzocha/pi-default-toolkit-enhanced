@@ -17,3 +17,7 @@ export function normalizeLine(str: string, lowerCase: boolean = false): string {
   const canon = normalizeUnicode(str);
   return stripWhitespace(lowerCase ? canon.toLowerCase() : canon);
 }
+
+export function normalizeIndent(line: string): string {
+  return line.replace(/\t/g, "    ").replace(/ {2,}/g, " ").trimEnd();
+}
