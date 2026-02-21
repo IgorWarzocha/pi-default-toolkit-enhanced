@@ -27,8 +27,17 @@ export class Calculator {
   }
 
   /**
-   * Adds two numbers
+   * Computes power with validation
    */
+  pow(base: number, exp: number): number {
+    const result = this.power(base, exp);
+    this.record(`pow(${base}, ${exp}) = ${result}`);
+    return result;
+  }
+
+  /**
+   * Adds two numbers
+  */
   add(a: number, b: number): number {
     return a + b;
   }
@@ -37,7 +46,7 @@ export class Calculator {
    * Subtracts b from a
    */
   subtract(a: number, b: number): number {
-    return a - b;
+   return subtractFn(a, b);
   }
 
   /**
@@ -63,9 +72,11 @@ export class Calculator {
 
   /**
    * Computes factorial of n
+   * @throws Error if n is negative or too large
    */
   factorial(n: number): number {
     if (n < 0) throw new Error('Factorial of negative number');
+    if (n > 170) throw new Error('Factorial overflow (max n=170)');
     if (n === 0 || n === 1) return 1;
     let result = 1;
     for (let i = 2; i <= n; i++) {

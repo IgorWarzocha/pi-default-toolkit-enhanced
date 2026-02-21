@@ -19,6 +19,7 @@ export type EditFileChunk = {
 
 export type EditLineAnchor = {
   line: number;
+  /** @deprecated Vestigial — retained for type stability. */
   offset: number;
 };
 

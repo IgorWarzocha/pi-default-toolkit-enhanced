@@ -38,7 +38,7 @@ describe("apply parser invariant hardening", () => {
     expect(hunks[0].moveToPath).toBe("to.ts");
   });
 
-  test("captures anchor offsets from prefixed edit lines", () => {
+  test("preserves line content with colon and uses header for anchor", () => {
     const patch = [
       "*** Begin Patch",
       "*** Edit File: a.txt",
@@ -49,8 +49,10 @@ describe("apply parser invariant hardening", () => {
     ].join("\n");
     const hunks = parsePatch(patch);
     if (hunks[0].type !== "edit") throw new Error("Expected edit hunk");
-    const anchor = hunks[0].chunks[0].oldAnchors[0];
-    expect(anchor.line).toBe(7);
+    const chunk = hunks[0].chunks[0];
+    expect(chunk.oldLines[0]).toBe("7: before");
+    const anchor = chunk.oldAnchors[0];
+    expect(anchor.line).toBe(4);
     expect(anchor.offset).toBe(4);
   });
 

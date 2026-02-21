@@ -4,8 +4,8 @@ import type { Hunk, EditFileChunk, ApplySummary, ApplyHunkResult } from "./types
 import type { ApplyNoop } from "./types.js";
 import { resolvePatchPath } from "./path-utils.js";
 import { buildNumberedDiff } from "./render.js";
-import { normalizeLine } from "../shared/normalize.js";
-import { computeReplacementsWithHealing, type ReplaceOp, type HealOptions, type LocateResult } from "./healing.js";
+import { normalizeLine, normalizeIndent } from "../shared/normalize.js";
+import { computeReplacementsWithHealing, stripAllWhitespace, type ReplaceOp, type HealOptions, type LocateResult } from "./healing.js";
 
 type AnchorError = Error & {
   expected?: string[];
@@ -21,10 +21,6 @@ const DEFAULT_HEAL_OPTIONS: HealOptions = {
 
 function sanitizeContext(context: string): string {
   return context.replace(/^\s*\d+:\s*/, "").replace(/^\s*\d+\|/, "");
-}
-
-function normalizeIndent(line: string): string {
-  return line.replace(/\t/g, "    ").replace(/ {2,}/g, " ").trimEnd();
 }
 
 function prefixLine(line: number, content: string): string {
@@ -204,6 +200,61 @@ function applyReplacements(sourceLines: string[], replacements: ReplaceOp[]): st
   return result;
 }
 
+/**
+ * File-aware pre-apply indent repair (Solution B).
+ * Silently fixes old-lines in each chunk by comparing stripped content
+ * against the actual file. Fixes the prefix-steals-one-space problem
+ * before the matching engine runs. Zero additional I/O — the file is
+ * already read on the line immediately before this call.
+ */
+function repairChunkIndent(
+  fileLines: string[],
+  chunks: EditFileChunk[],
+): void {
+  for (const chunk of chunks) {
+    for (let i = 0; i < chunk.oldLines.length; i++) {
+      const patchLine = chunk.oldLines[i];
+      const patchStripped = stripAllWhitespace(patchLine);
+      if (patchStripped.length === 0) continue;
+
+      // Try the anchor position first (from @@ -N header)
+      const anchor = chunk.oldAnchors[i];
+      if (anchor && anchor.line > 0 && anchor.line <= fileLines.length) {
+        const fileLine = fileLines[anchor.line - 1];
+        if (stripAllWhitespace(fileLine) === patchStripped) {
+          chunk.oldLines[i] = fileLine;
+          // Fix corresponding context line in newLines
+          if (i < chunk.newLines.length
+              && stripAllWhitespace(chunk.newLines[i]) === patchStripped) {
+            chunk.newLines[i] = fileLine;
+          }
+          continue;
+        }
+      }
+
+      // Scan nearby (small window) for a unique content match
+      const seed = anchor && anchor.line > 0 ? anchor.line - 1 : 0;
+      const scanStart = Math.max(0, seed - 20);
+      const scanEnd = Math.min(fileLines.length, seed + 20);
+      let matchIdx = -1;
+      let matchCount = 0;
+      for (let j = scanStart; j < scanEnd; j++) {
+        if (stripAllWhitespace(fileLines[j]) === patchStripped) {
+          matchIdx = j;
+          matchCount++;
+        }
+      }
+      if (matchCount === 1) {
+        chunk.oldLines[i] = fileLines[matchIdx];
+        if (i < chunk.newLines.length
+            && stripAllWhitespace(chunk.newLines[i]) === patchStripped) {
+          chunk.newLines[i] = fileLines[matchIdx];
+        }
+      }
+    }
+  }
+}
+
 
 function anchorLines(lines: string[]): string[] {
   const out: string[] = [];
@@ -328,6 +379,7 @@ async function deriveUpdatedContentWithHealing(
   options: HealOptions,
 ): Promise<{ content: string; anchors: string[] }> {
   const originalLines = originalContent.split("\n");
+  repairChunkIndent(originalLines, chunks);
   const replacements = computeReplacementsWithHealing(
     originalLines,
     filePath,

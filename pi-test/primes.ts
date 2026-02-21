@@ -24,4 +24,18 @@ export function isPrime(n: number): boolean {
     if (n % i === 0) return false;
   }
   return true;
+ }
+
+ /**
+  * Finds nth prime number
+  */
+ export function nthPrime(n: number): number {
+   if (n < 1) throw new Error('n must be positive');
+   let count = 0;
+   let candidate = 2;
+   while (count < n) {
+     if (isPrime(candidate)) count++;
+     if (count < n) candidate++;
+   }
+   return candidate;
 }
