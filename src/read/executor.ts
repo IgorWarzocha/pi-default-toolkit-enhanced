@@ -102,15 +102,21 @@ function readRange(lines: string[], file: ReadFileInput): { output: string[]; tr
 export async function executeRead(cwd: string, files: ReadFileInput[]) {
   const content: (TextContent | ImageContent)[] = [];
   const details: ReadDetail[] = [];
+  const batch = files.length > 1;
+
+  if (batch) {
+    content.push({ type: "text", text: "*** Begin Read" });
+  }
 
   for (const file of files) {
+    if (batch) {
+      content.push({ type: "text", text: `*** Read File: ${file.path}` });
+    }
     try {
       const absolute = path.resolve(cwd, file.path.replace(/^@/, "").trim());
       await access(absolute, constants.R_OK);
       const buffer = await readFile(absolute);
       const mime = detectImage(buffer);
-
-      if (files.length > 1) content.push({ type: "text", text: `--- ${file.path} ---` });
 
       if (mime) {
         if (file.search) throw new Error("Invalid input: search MUST NOT be used for image files.");
@@ -133,9 +139,13 @@ export async function executeRead(cwd: string, files: ReadFileInput[]) {
       details.push({ path: file.path, offset: file.offset, limit: file.limit, truncated: result.truncated });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      content.push({ type: "text", text: `--- ${file.path} ---\nERROR: ${message}` });
+      content.push({ type: "text", text: `ERROR: ${message}` });
       details.push({ path: file.path, error: message });
     }
+  }
+
+  if (batch) {
+    content.push({ type: "text", text: "*** End Read" });
   }
 
   return { content, details: { files: details } };

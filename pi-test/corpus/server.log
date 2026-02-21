@@ -1,0 +1,10 @@
+2026-02-20T15:00:01Z INFO boot sequence start module=core
+2026-02-20T15:00:02Z WARN retrying upstream request id=req-001 attempt=1
+2026-02-20T15:00:03Z WARN retrying upstream request id=req-001 attempt=2
+2026-02-20T15:00:04Z ERROR upstream timeout id=req-001 status=504
+2026-02-20T15:00:05Z INFO fallback path activated strategy=cache
+2026-02-20T15:00:06Z INFO response served id=req-001 source=cache
+2026-02-20T15:00:07Z INFO metrics flush count=143 duration_ms=12
+2026-02-20T15:00:08Z INFO user action user=alice op=export format=csv
+2026-02-20T15:00:09Z INFO user action user=bob op=import format=json
+2026-02-20T15:00:10Z ERROR validation failed field=email reason=invalid_format

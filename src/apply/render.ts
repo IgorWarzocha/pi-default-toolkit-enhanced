@@ -1,4 +1,4 @@
-import { keyHint } from "@mariozechner/pi-coding-agent";
+import { keyHint, renderDiff } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import type { ApplyResponse } from "./types.js";
 
@@ -159,6 +159,28 @@ export function renderApplyPatchResult(result: any, expanded: boolean, isPartial
     output = colorizeSummary(collapsed.text, tone, theme, partial);
     if (collapsed.trimmed) {
       output += `\n${theme.fg("muted", `... (${collapsed.hidden} more lines, ${keyHint("expandTools", "to expand")})`)}`;
+    }
+  }
+  const fileDiffs = response.fileDiffs ?? [];
+  if (fileDiffs.length > 0) {
+    const visibleFileCount = expanded ? fileDiffs.length : Math.min(fileDiffs.length, 2);
+    for (const fileDiff of fileDiffs.slice(0, visibleFileCount)) {
+      const header = fileDiff.moveFrom ? `${fileDiff.status} ${fileDiff.path} (from ${fileDiff.moveFrom})` : `${fileDiff.status} ${fileDiff.path}`;
+      if (fileDiff.status === "D" || fileDiff.diff.trim().length === 0) {
+        output += `${output ? "\n\n" : ""}${theme.fg(tone, header)}`;
+        continue;
+      }
+      const renderedDiff = renderDiff(fileDiff.diff);
+      const diffLines = renderedDiff.split("\n");
+      const visibleDiffLines = expanded ? diffLines.length : Math.min(diffLines.length, 30);
+      const shownDiff = diffLines.slice(0, visibleDiffLines).join("\n");
+      output += `${output ? "\n\n" : ""}${theme.fg(tone, header)}\n${shownDiff}`;
+      if (!expanded && diffLines.length > visibleDiffLines) {
+        output += `\n${theme.fg("muted", `... (${diffLines.length - visibleDiffLines} more diff lines, ${keyHint("expandTools", "to expand")})`)}`;
+      }
+    }
+    if (!expanded && fileDiffs.length > visibleFileCount) {
+      output += `\n\n${theme.fg("muted", `... (${fileDiffs.length - visibleFileCount} more changed files, ${keyHint("expandTools", "to expand")})`)}`;
     }
   }
   return new Text(output || theme.fg("toolOutput", "No output"), 0, 0);

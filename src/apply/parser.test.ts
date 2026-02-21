@@ -25,6 +25,19 @@ describe("apply parser invariant hardening", () => {
     expect(hunks[3].type).toBe("delete");
   });
 
+  test("supports inline move syntax", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Move File: from.ts -> to.ts",
+      "*** End Patch",
+    ].join("\n");
+    const hunks = parsePatch(patch);
+    expect(hunks.length).toBe(1);
+    if (hunks[0].type !== "move") throw new Error("Expected move hunk");
+    expect(hunks[0].filePath).toBe("from.ts");
+    expect(hunks[0].moveToPath).toBe("to.ts");
+  });
+
   test("captures anchor offsets from prefixed edit lines", () => {
     const patch = [
       "*** Begin Patch",

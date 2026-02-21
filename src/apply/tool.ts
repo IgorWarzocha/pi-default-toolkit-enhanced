@@ -238,6 +238,7 @@ function mapResponse(summary: ApplySummary, phase: "parse" | "preflight" | "comm
       deletions,
       alreadyApplied: summary.hunkResults.filter((item) => item.status === "already_applied").length,
     },
+    fileDiffs: summary.fileDiffs,
     files: [...files.values()],
     errors,
   };

@@ -1,0 +1,28 @@
+ {
+   "name": "read-tool-e2e",
+   "version": 3,
+   "features": {
+     "search": true,
+     "regex": true,
+     "images": true,
+     "batch": true
+   },
+   "piped_values": [
+     "A|B|C",
+     "line|with|multiple|pipes",
+     "42|literal-prefix"
+   ],
+   "nested": {
+     "levels": [
+       {
+         "id": "L1",
+         "payload": "{\"deep\":\"value\",\"sample\":\"x|y|z\"}"
+       },
+       {
+         "id": "L2",
+         "payload": "regex-test: ^(foo|bar)+$"
+       }
+     ]
+   },
+   "notes": "Do not parse this as anchors: 999|still-content"
+ }

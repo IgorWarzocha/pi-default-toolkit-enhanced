@@ -17,10 +17,14 @@ export function setupApplyGuard(pi: ExtensionAPI): void {
 
   pi.on("tool_call", (event) => {
     if (event.toolName === "edit" || event.toolName === "write") {
-      return {
-        block: true,
-        reason: `The '${event.toolName}' tool is disabled. Use apply_patch for all file modifications.`,
-      };
+      const active = new Set(pi.getActiveTools());
+      const applyMode = active.has("apply_patch") && !active.has("edit") && !active.has("write");
+      if (applyMode) {
+        return {
+          block: true,
+          reason: `The '${event.toolName}' tool is disabled. Use apply_patch for all file modifications.`,
+        };
+      }
     }
 
     if (event.toolName !== "apply_patch") return;

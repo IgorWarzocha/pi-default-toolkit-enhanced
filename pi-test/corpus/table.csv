@@ -1,0 +1,6 @@
+id,name,role,comment
+1,Alice,admin,"contains | pipe and comma, keep intact"
+2,Bob,editor,"regex sample ^foo.*bar$"
+3,Chloé,viewer,"unicode name and smart quote “ok”"
+4,Дмитрий,viewer,"cyrillic plus dash — test"
+5,李雷,editor,"cjk test with ellipsis …"

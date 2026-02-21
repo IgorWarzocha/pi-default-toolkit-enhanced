@@ -1,0 +1,6 @@
+Appended line to new-a.
+*** Move File: e2e/new-b.md
+*** Move to: e2e/moved-b.md
+*** Delete File: e2e/new-c.json
+ This is file A - EDITED (strict prefix).
+ This is file B - EDITED (strict prefix).

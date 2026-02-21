@@ -149,8 +149,8 @@ export function buildUniqueLineByContent(lines: string[]): Map<string, number> {
 
 export function locate(lines: string[], chunk: EditFileChunk, seed: number, uniqueLineByContent: Map<string, number>, options: HealOptions): LocateResult {
   if (chunk.oldLines.length === 0) {
-    const start = Math.max(0, Math.min(seed, lines.length));
-    return { start, relocatedBy: 0, fuzzUsed: 0 };
+    const target = Math.max(0, Math.min(seed + 1, lines.length));
+    return { start: target, relocatedBy: 0, fuzzUsed: 0 };
   }
   const max = Math.max(0, lines.length - chunk.oldLines.length + 1);
   if (chunk.isEndOfFile) {
@@ -204,21 +204,6 @@ function applyReplacements(sourceLines: string[], replacements: ReplaceOp[]): st
   return result;
 }
 
-function collapseEmpty(lines: string[]): string[] {
-  const out: string[] = [];
-  let empty = false;
-  for (const line of lines) {
-    if (line.trim().length === 0) {
-      if (empty) continue;
-      empty = true;
-      out.push("");
-      continue;
-    }
-    empty = false;
-    out.push(line);
-  }
-  return out;
-}
 
 function anchorLines(lines: string[]): string[] {
   const out: string[] = [];
@@ -356,7 +341,7 @@ async function deriveUpdatedContentWithHealing(
     mismatch,
     buildUniqueLineByContent,
   );
-  const updatedLines = collapseEmpty(applyReplacements(originalLines, replacements));
+  const updatedLines = applyReplacements(originalLines, replacements);
   if (updatedLines[updatedLines.length - 1] !== "") updatedLines.push("");
   const content = updatedLines.join("\n");
   return { content, anchors: anchorLines(content.split("\n")) };
@@ -456,6 +441,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
   const commit: PlannedCommit = { writes: [], deletes: [] };
   const scheduledWrite = new Set<string>();
   const scheduledDelete = new Set<string>();
+  const plannedContent = new Map<string, string>();
 
   for (const hunk of hunks) {
     try {
@@ -466,6 +452,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
         }
         if (scheduledWrite.has(target)) throw new Error(`CONFLICT: Multiple writes target '${hunk.filePath}'.`);
         scheduledWrite.add(target);
+        plannedContent.set(target, hunk.contents);
         commit.writes.push({ path: target, content: hunk.contents });
         summary.created.push(hunk.filePath);
         summary.fileDiffs.push({ status: "C", path: hunk.filePath, diff: buildNumberedDiff("", hunk.contents) });
@@ -496,6 +483,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
         if (scheduledDelete.has(source)) throw new Error(`CONFLICT: Move source already scheduled for delete: ${hunk.filePath}`);
         scheduledWrite.add(destination);
         scheduledDelete.add(source);
+        plannedContent.set(destination, sourceContent);
         commit.writes.push({ path: destination, content: sourceContent });
         commit.deletes.push({ path: source });
         summary.moved.push(hunk.moveToPath);
@@ -505,7 +493,8 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
       }
 
       const source = resolvePatchPath(cwd, hunk.filePath);
-      const originalContent = await readOptional(source);
+      const plannedSource = plannedContent.get(source);
+      const originalContent = plannedSource ?? await readOptional(source);
       if (originalContent === undefined) throw new Error(`CONFLICT: Edit source missing: ${hunk.filePath}`);
       const next = await deriveUpdatedContentWithHealing(originalContent, source, hunk.chunks, summary.noops, summary.hunkResults, DEFAULT_HEAL_OPTIONS);
       const diff = buildNumberedDiff(originalContent, next.content);
@@ -520,6 +509,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
         if (scheduledDelete.has(source)) throw new Error(`CONFLICT: Edit source already scheduled for delete: ${hunk.filePath}`);
         scheduledWrite.add(destination);
         scheduledDelete.add(source);
+        plannedContent.set(destination, next.content);
         commit.writes.push({ path: destination, content: next.content });
         commit.deletes.push({ path: source });
         summary.edited.push(hunk.moveToPath);
@@ -528,9 +518,16 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
         continue;
       }
 
-      if (scheduledWrite.has(source)) throw new Error(`CONFLICT: Multiple writes target '${hunk.filePath}'.`);
-      scheduledWrite.add(source);
-      commit.writes.push({ path: source, content: next.content });
+      if (scheduledWrite.has(source)) {
+        plannedContent.set(source, next.content);
+        const existing = commit.writes.find((item) => item.path === source);
+        if (!existing) throw new Error(`CONFLICT: Missing planned write for '${hunk.filePath}'.`);
+        existing.content = next.content;
+      } else {
+        scheduledWrite.add(source);
+        plannedContent.set(source, next.content);
+        commit.writes.push({ path: source, content: next.content });
+      }
       summary.edited.push(hunk.filePath);
       summary.fileDiffs.push({ status: "E", path: hunk.filePath, diff });
       upsertLive(summary, hunk.filePath, next.anchors);

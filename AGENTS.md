@@ -5,9 +5,9 @@
  ## Structure
 
  - `index.ts`: Extension registration and tool/guard setup.
- - `src/apply/`: Relocation engine, hunk parsing, and healing.
- - `src/read/`: Hashed read tool and grep executor.
- - `src/shared/`: Normalized FNV-1a/xxHash32 hashing.
+ - `src/apply/`: Patch parser, relocation engine, and healing.
+ - `src/read/`: Multi-file read tool and search executor.
+ - `src/shared/`: Text normalization helpers.
  - `src/bash-guard.ts`: Safety interception for shell writes.
 
  ## Rules

@@ -1,0 +1,44 @@
+// Line 1: First comment
+// Line 2: Second comment
+// Line 3: Third comment
+// Line 4: Fourth comment
+// Line 5: Fifth comment
+// Line 6: Sixth comment
+// Line 7: Seventh comment
+// Line 8: Eighth comment
+// Line 9: Ninth comment
+// Line 10: Tenth comment
+// Line 11: Eleventh comment
+// Line 12: Twelfth comment
+// Line 13: Thirteenth comment
+// Line 14: Fourteenth comment
+// Line 15: Fifteenth comment
+// Line 16: Sixteenth comment
+// Line 17: Seventeenth comment
+// Line 18: Eighteenth comment
+// Line 19: Nineteenth comment
+// Line 20: Twentieth comment
+// Line 21: Twenty-first comment
+// Line 22: Twenty-second comment
+// Line 23: Twenty-third comment
+// Line 24: Twenty-fourth comment
+// Line 25: Twenty-fifth comment
+// Line 26: Twenty-sixth comment
+// Line 27: Twenty-seventh comment
+// Line 28: Twenty-eighth comment
+// Line 29: Twenty-ninth comment
+// Line 30: Thirtieth comment
+// Line 31: Thirty-first comment
+// Line 32: Thirty-second comment
+// Line 33: Thirty-third comment
+// Line 34: Thirty-fourth comment
+// Line 35: Thirty-fifth comment
+// Line 36: Thirty-sixth comment
+// Line 37: Thirty-seventh comment
+// Line 38: Thirty-eighth comment
+// Line 39: Thirty-ninth comment
+// Line 40: Fortieth comment
+export const MAX_ITEMS = 40;
+export function getItem(index: number): string {
+  return `Item ${index}`;
+}

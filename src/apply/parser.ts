@@ -21,7 +21,7 @@ function parseAnchoredBody(body: string): { line: string; lineNumber: number } {
 }
 
 function normalizePatchText(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\t/g, "    ").trim();
+  return text.replace(/\r\n/g, "\n").trim();
 }
 
 function stripHeredoc(input: string): string {
@@ -94,6 +94,15 @@ function parseHeader(line: string): { kind: "create" | "edit" | "delete" | "move
   if (token === "edit file" || token === "edit") return { kind: "edit", path };
   if (token === "delete file" || token === "delete") return { kind: "delete", path };
   return { kind: "move", path };
+}
+
+function parseInlineMove(path: string): { from: string; to: string } | undefined {
+  const match = path.match(/^(.*?)\s*->\s*(.*?)$/);
+  if (!match) return undefined;
+  const from = (match[1] ?? "").trim();
+  const to = (match[2] ?? "").trim();
+  if (from.length === 0 || to.length === 0) return undefined;
+  return { from, to };
 }
 
 function parseMoveTo(line: string): string | undefined {
@@ -253,6 +262,10 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
     return { hunk: { type: "delete", filePath }, consumedLines };
   }
   if (header && header.kind === "move") {
+    const inline = parseInlineMove(header.path);
+    if (inline) {
+      return { hunk: { type: "move", filePath: inline.from, moveToPath: inline.to }, consumedLines: 1 };
+    }
     const filePath = header.path;
     const toLine = lines[1];
     const moveToPath = toLine ? parseMoveTo(toLine) : undefined;
@@ -266,11 +279,12 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
   }
 
   if (header && header.kind === "edit") {
-    const filePath = header.path;
+    const inline = parseInlineMove(header.path);
+    const filePath = inline ? inline.from : header.path;
     let consumedLines = 1;
     let remaining = lines.slice(1);
 
-    let moveToPath: string | undefined;
+    let moveToPath: string | undefined = inline ? inline.to : undefined;
     const moveLine = remaining[0];
     const parsedMoveTo = moveLine ? parseMoveTo(moveLine) : undefined;
     if (parsedMoveTo) {

@@ -281,13 +281,6 @@ export function computeReplacementsWithHealing(
 ): ReplaceOp[] {
   const uniqueLineByContent = buildUniqueLineByContentFn(originalLines);
   const replacements: ReplaceOp[] = [];
-  const explicitlyTouchedLines = new Set<number>();
-  for (const chunk of chunks) {
-    healChunkOverlaps(chunk);
-    for (const anchor of chunk.oldAnchors) {
-      if (anchor.line > 0) explicitlyTouchedLines.add(anchor.line);
-    }
-  }
   let drift = 0;
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
     const chunk = chunks[chunkIdx];
@@ -312,9 +305,7 @@ export function computeReplacementsWithHealing(
         throw mismatchFn(originalLines, filePath, chunk);
       }
       const oldLength = range.end - range.start + 1;
-      const rangeOld = originalLines.slice(range.start, range.end + 1);
-      let rangeNew = restoreIndentForPairedReplacement(rangeOld, [...chunk.newLines]);
-      rangeNew = restoreIndentFromFirst(rangeOld, rangeNew);
+      const rangeNew = [...chunk.newLines];
       replacements.push({ start: range.start, oldLength, newLines: rangeNew, relocatedBy: 0, fuzzUsed: 0 });
       hunkResults.push({ path: filePath, hunk: chunkIdx + 1, status: "applied", relocatedBy: 0, fuzzUsed: 0 });
       drift += rangeNew.length - oldLength;
@@ -337,31 +328,7 @@ export function computeReplacementsWithHealing(
     }
     const start = locate.start;
     const origLines = originalLines.slice(start, start + chunk.oldLines.length);
-    let newLines = [...chunk.newLines];
-    const merged = maybeExpandSingleLineMerge(originalLines, start + 1, newLines, explicitlyTouchedLines);
-    if (merged) {
-      const mergedOrigLines = originalLines.slice(merged.startLine - 1, merged.startLine - 1 + merged.deleteCount);
-      let healedLines = restoreIndentForPairedReplacement([mergedOrigLines[0] ?? ""], merged.newLines);
-      if (mergedOrigLines.join("\n") === healedLines.join("\n") && mergedOrigLines.some(l => CONFUSABLE_HYPHENS_RE.test(l))) {
-        healedLines = normalizeConfusableHyphensInLines(healedLines);
-      }
-      if (mergedOrigLines.join("\n") === healedLines.join("\n")) {
-        noops.push({ path: filePath, line: merged.startLine, reason: "Replacement identical to current content" });
-        hunkResults.push({ path: filePath, hunk: chunkIdx + 1, status: "already_applied", relocatedBy: locate.relocatedBy, fuzzUsed: locate.fuzzUsed });
-        continue;
-      }
-      replacements.push({ start: merged.startLine - 1, oldLength: merged.deleteCount, newLines: healedLines, relocatedBy: locate.relocatedBy, fuzzUsed: locate.fuzzUsed });
-      hunkResults.push({ path: filePath, hunk: chunkIdx + 1, status: "applied", relocatedBy: locate.relocatedBy, fuzzUsed: locate.fuzzUsed });
-      drift += healedLines.length - merged.deleteCount;
-      continue;
-    }
-    newLines = stripRangeBoundaryEcho(originalLines, start + 1, start + chunk.oldLines.length, newLines);
-    newLines = restoreOldWrappedLines(origLines, newLines);
-    newLines = restoreIndentForPairedReplacement(origLines, newLines);
-    newLines = restoreIndentFromFirst(origLines, newLines);
-    if (origLines.join("\n") === newLines.join("\n") && origLines.some(l => CONFUSABLE_HYPHENS_RE.test(l))) {
-      newLines = normalizeConfusableHyphensInLines(newLines);
-    }
+    const newLines = [...chunk.newLines];
     if (origLines.join("\n") === newLines.join("\n")) {
       noops.push({ path: filePath, line: start + 1, reason: "Replacement identical to current content" });
       hunkResults.push({ path: filePath, hunk: chunkIdx + 1, status: "already_applied", relocatedBy: locate.relocatedBy, fuzzUsed: locate.fuzzUsed });

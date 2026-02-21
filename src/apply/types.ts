@@ -117,6 +117,7 @@ export type ApplyResponse = {
     deletions: number;
     alreadyApplied: number;
   };
+  fileDiffs: ApplyFileDiff[];
   files: Array<{
     pathOld: string;
     pathNew: string;

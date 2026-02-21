@@ -1,0 +1,18 @@
+# Gemini's Comprehensive Analysis of Git Diff Formats & AI-Native Edit Tool Design
+
+This document serves as an exhaustive reference on the anatomy of Git diff formats, followed by a conceptual blueprint for an ideal, AI-driven code editing tool designed to leverage, augment, and transcend these formats.
+
+---
+
+## Part I: An Ultra-Thorough Understanding of Git Diff Formats
+
+Git utilizes several diff formats, but the most prominent is the **Git Unified Diff format**. It is a heavily extended version of the standard unified diff (`diff -u`). To build tooling around it, one must understand its exact anatomy down to the character level.
+
+### 1. The Git Unified Diff: Anatomical Breakdown
+
+A standard `git diff` output is divided into multiple sections per file changed.
+
+#### A. The Git Header
+Every changed file starts with a Git header.
+```diff
+diff --git a/src/main.py b/src/main.py

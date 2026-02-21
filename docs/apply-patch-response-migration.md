@@ -41,6 +41,12 @@ Legacy summary-style details payloads are removed.
       deletions: number,
       alreadyApplied: number
     },
+    fileDiffs: Array<{
+      status: "C" | "E" | "D" | "MV",
+      path: string,
+      moveFrom?: string,
+      diff: string
+    }>,
     files: Array<{
       pathOld: string,
       pathNew: string,

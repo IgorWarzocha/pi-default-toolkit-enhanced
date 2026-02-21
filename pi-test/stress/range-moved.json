@@ -1,0 +1,28 @@
+ {
+   "metadata": {
+     "id": "stress-test-1",
+     "version": "1.0.0",
+     "tags": ["stress", "range", "test"]
+   },
+   "data": {
+     "entry1": { "val": 1 },
+     "entry2": { "val": 2 },
+     "ACTIVE_KEY_NEW": "replacement-content",
+     "entry3": { "val": 3 },
+     "entry4": { "val": 4 }
+   },
+   "settings": {
+     "enabled": true,
+     "retries": 3,
+     "timeout": 3000,
+     "features": {
+       "alpha": false,
+       "beta": true,
+       "gamma": true
+     }
+   },
+   "footer": {
+     "generatedAt": "2026-02-20",
+     "checksum": "abcdef123456"
+   }
+ }
