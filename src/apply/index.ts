@@ -399,10 +399,19 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+function classifyFailureCode(message: string): string {
+  if (message.includes("AmbiguousApplyError") || message.includes("AMBIGUOUS MATCH")) return "AmbiguousApplyError";
+  if (message.includes("TransactionError")) return "TransactionError";
+  if (message.includes("CONFLICT") || message.includes("outside")) return "PathPolicyError";
+  if (message.includes("PATCH FAILED") || message.includes("MISMATCH") || message.includes("CONTEXT ERROR")) return "ContextMismatchError";
+  if (message.includes("Unsupported") || message.includes("binary")) return "UnsupportedFeatureError";
+  return "PatchValidationError";
+}
+
 function failSummary(summary: ApplySummary, hunk: Hunk, error: unknown): ApplySummary {
   const typed = error as AnchorError;
   const message = error instanceof Error ? error.message : String(error);
-  const failure = { path: hunk.filePath, error: message } as { path: string; error: string; expected?: string[]; actual?: string[]; suggest?: string };
+  const failure = { path: hunk.filePath, code: classifyFailureCode(message), error: message } as { path: string; code: string; error: string; expected?: string[]; actual?: string[]; suggest?: string };
   if (typed.expected && typed.expected.length > 0) failure.expected = typed.expected;
   if (typed.actual && typed.actual.length > 0) failure.actual = typed.actual;
   if (typed.suggest) failure.suggest = typed.suggest;
@@ -554,7 +563,7 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
   } catch (error) {
     await rollback(writesDone, deletesDone, backups);
     const message = error instanceof Error ? error.message : String(error);
-    summary.failed.push({ path: "<commit>", error: `TransactionError: ${message}` });
+    summary.failed.push({ path: "<commit>", code: "TransactionError", error: `TransactionError: ${message}` });
   }
 
   return summary;

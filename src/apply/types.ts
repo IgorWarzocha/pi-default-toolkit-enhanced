@@ -104,3 +104,34 @@ export type ApplyHunkResult = {
   relocatedBy: number;
   fuzzUsed: number;
 };
+
+export type ApplyPhase = "parse" | "preflight" | "commit";
+
+export type ApplyResponse = {
+  ok: boolean;
+  phase: ApplyPhase;
+  summary: {
+    files: number;
+    hunks: number;
+    additions: number;
+    deletions: number;
+    alreadyApplied: number;
+  };
+  files: Array<{
+    pathOld: string;
+    pathNew: string;
+    operation: "create" | "edit" | "move" | "delete";
+    status: "applied" | "already_applied" | "rejected";
+    hunks: ApplyHunkResult[];
+  }>;
+  errors: Array<{
+    code: string;
+    message: string;
+    path: string;
+    hunk: number | null;
+    expected: string | null;
+    actual: string | null;
+    candidates: string[];
+    remedy: string;
+  }>;
+};

@@ -4,7 +4,7 @@ import { parsePatch } from "./parser.js";
 import { applyHunks } from "./index.js";
 import { renderApplyPatchCall, renderApplyPatchResult, formatSummary } from "./render.js";
 import { enrichParseError } from "./parse-recovery.js";
-import type { ApplySummary, Hunk } from "./types.js";
+import type { ApplyResponse, ApplySummary, Hunk } from "./types.js";
 import { InvalidHunkError, InvalidPatchError } from "./types.js";
 
 function isBegin(line: string): boolean {
@@ -156,6 +156,93 @@ function successCount(summary: ApplySummary): number {
   return summary.created.length + summary.edited.length + summary.moved.length + summary.deleted.length;
 }
 
+function classifyCode(message: string, fallback?: string): string {
+  if (fallback) return fallback;
+  if (message.includes("AmbiguousApplyError") || message.includes("AMBIGUOUS MATCH")) return "AmbiguousApplyError";
+  if (message.includes("TransactionError")) return "TransactionError";
+  if (message.includes("Unsupported") || message.includes("allowBinary") || message.includes("binary")) return "UnsupportedFeatureError";
+  if (message.includes("PATCH FAILED") || message.includes("MISMATCH") || message.includes("CONTEXT ERROR")) return "ContextMismatchError";
+  if (message.includes("CONFLICT") || message.includes("path") || message.includes("outside")) return "PathPolicyError";
+  if (message.includes("PatchParseError")) return "PatchParseError";
+  return "PatchValidationError";
+}
+
+function collectCandidates(message: string): string[] {
+  const match = message.match(/lines\s+([0-9,\s]+)/i);
+  if (!match) return [];
+  return match[1].split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+function diffCounts(diff: string): { additions: number; deletions: number } {
+  const lines = diff.split("\n");
+  let additions = 0;
+  let deletions = 0;
+  for (const line of lines) {
+    if (line.startsWith("+")) additions += 1;
+    if (line.startsWith("-")) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+function mapResponse(summary: ApplySummary, phase: "parse" | "preflight" | "commit"): ApplyResponse {
+  const files = new Map<string, { pathOld: string; pathNew: string; operation: "create" | "edit" | "move" | "delete"; status: "applied" | "already_applied" | "rejected"; hunks: ApplySummary["hunkResults"] }>();
+  for (const path of summary.created) files.set(path, { pathOld: path, pathNew: path, operation: "create", status: "applied", hunks: [] });
+  for (const path of summary.edited) files.set(path, { pathOld: path, pathNew: path, operation: "edit", status: "applied", hunks: [] });
+  for (const path of summary.deleted) files.set(path, { pathOld: path, pathNew: path, operation: "delete", status: "applied", hunks: [] });
+  for (const path of summary.moved) {
+    const diff = summary.fileDiffs.find((item) => item.status === "MV" && item.path === path);
+    const pathOld = diff?.moveFrom ?? path;
+    files.set(path, { pathOld, pathNew: path, operation: "move", status: "applied", hunks: [] });
+  }
+  for (const hunk of summary.hunkResults) {
+    const base = files.get(hunk.path) ?? { pathOld: hunk.path, pathNew: hunk.path, operation: "edit" as const, status: "applied" as const, hunks: [] };
+    base.hunks.push(hunk);
+    if (hunk.status === "rejected") base.status = "rejected";
+    if (hunk.status === "already_applied" && base.status !== "rejected") base.status = "already_applied";
+    files.set(hunk.path, base);
+  }
+  for (const failed of summary.failed) {
+    const base = files.get(failed.path) ?? { pathOld: failed.path, pathNew: failed.path, operation: "edit" as const, status: "rejected" as const, hunks: [] };
+    base.status = "rejected";
+    files.set(failed.path, base);
+  }
+  const errors = summary.failed.map((failed) => {
+    const code = classifyCode(failed.error, failed.code);
+    const candidates = collectCandidates(failed.error);
+    const remedy = failed.suggest ?? "Use exact file content anchors and retry with explicit context.";
+    return {
+      code,
+      message: failed.error,
+      path: failed.path,
+      hunk: null,
+      expected: failed.expected && failed.expected.length > 0 ? failed.expected.join("\n") : null,
+      actual: failed.actual && failed.actual.length > 0 ? failed.actual.join("\n") : null,
+      candidates,
+      remedy,
+    };
+  });
+  let additions = 0;
+  let deletions = 0;
+  for (const item of summary.fileDiffs) {
+    const counts = diffCounts(item.diff);
+    additions += counts.additions;
+    deletions += counts.deletions;
+  }
+  return {
+    ok: summary.failed.length === 0,
+    phase,
+    summary: {
+      files: files.size,
+      hunks: summary.hunkResults.length,
+      additions,
+      deletions,
+      alreadyApplied: summary.hunkResults.filter((item) => item.status === "already_applied").length,
+    },
+    files: [...files.values()],
+    errors,
+  };
+}
+
 export function registerApplyTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "apply_patch",
@@ -180,10 +267,11 @@ export function registerApplyTool(pi: ExtensionAPI): void {
         const errorMessage = await enrichParseError(ctx.cwd, params.patchText, new Error(`${base}\n${hint}`));
         const summary = baseSummary();
         summary.failed.push({ path: "<patch>", error: errorMessage });
+        const response = mapResponse(summary, "parse");
         return {
           content: [{ type: "text", text: formatSummary(summary) }],
           isError: true,
-          details: summary,
+          details: response,
         };
       }
       let parsed: Hunk[] = [];
@@ -202,28 +290,31 @@ export function registerApplyTool(pi: ExtensionAPI): void {
         }
       }
       if (parseFailed.failed.length > 0) {
+        const response = mapResponse(parseFailed, "parse");
         return {
           content: [{ type: "text", text: formatSummary(parseFailed) }],
           isError: true,
-          details: parseFailed,
+          details: response,
         };
       }
       if (parsed.length === 0) {
         const summary = parseFailed;
         const allFailed = summary.failed.length > 0 && successCount(summary) === 0;
+        const response = mapResponse(summary, "parse");
         return {
           content: [{ type: "text", text: formatSummary(summary) }],
           isError: allFailed,
-          details: summary,
+          details: response,
         };
       }
       const applied = await applyHunks(ctx.cwd, parsed);
       const summary = merge(applied, parseFailed);
       const allFailed = summary.failed.length > 0 && successCount(summary) === 0;
+      const response = mapResponse(summary, "commit");
       return {
         content: [{ type: "text", text: formatSummary(summary) }],
         isError: allFailed,
-        details: summary,
+        details: response,
       };
     },
   });

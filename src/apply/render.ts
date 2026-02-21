@@ -1,6 +1,6 @@
-import { keyHint, renderDiff } from "@mariozechner/pi-coding-agent";
+import { keyHint } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import type { ApplySummary } from "./types.js";
+import type { ApplyResponse } from "./types.js";
 
 function splitContentLines(content: string): string[] {
   const lines = content.split("\n");
@@ -52,10 +52,11 @@ export function formatSummary(summary: ApplySummary): string {
       ? "FAILED:"
       : "PARTIAL SUCCESS:";
   lines.push(title);
-  for (const file of summary.created) lines.push(`  + ${file}`);
-  for (const file of summary.edited) lines.push(`  * ${file}`);
-  for (const file of summary.moved) lines.push(`  > ${file}`);
-  for (const file of summary.deleted) lines.push(`  - ${file}`);
+  if (summary.created.length > 0) lines.push(`CREATED (${summary.created.length}): ${summary.created.join(", ")}`);
+  if (summary.edited.length > 0) lines.push(`EDITED (${summary.edited.length}): ${summary.edited.join(", ")}`);
+  if (summary.moved.length > 0) lines.push(`MOVED (${summary.moved.length}): ${summary.moved.join(", ")}`);
+  if (summary.deleted.length > 0) lines.push(`DELETED (${summary.deleted.length}): ${summary.deleted.join(", ")}`);
+  if (successCount === 0 && failedCount === 0) lines.push("NO-OP: No file operations were applied.");
   
   if (summary.failed?.length > 0) {
     lines.push("\nFAILURES:");
@@ -113,54 +114,51 @@ function collapseError(text: string, expanded: boolean): string {
   return `${head}\n... (${lines.length - limit} more lines, ${keyHint("expandTools", "to expand")})`;
 }
 
+function colorizeSummary(text: string, tone: "success" | "warning" | "error", theme: any, partial: boolean): string {
+  if (!partial) {
+    return theme.fg(tone, text);
+  }
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let failures = false;
+  for (const line of lines) {
+    if (line.trim() === "FAILURES:") {
+      failures = true;
+      out.push(theme.fg("error", line));
+      continue;
+    }
+    if (failures && line.trim().length > 0) {
+      out.push(theme.fg("error", line));
+      continue;
+    }
+    out.push(theme.fg("success", line));
+  }
+  return out.join("\n");
+}
+
 export function renderApplyPatchResult(result: any, expanded: boolean, isPartial: boolean, theme: any): Text {
   const rawTextContent = (result.content ?? [])
     .filter((block: any) => block.type === "text" && typeof block.text === "string")
     .map((block: any) => block.text ?? "")
     .join("\n")
     .trim();
-  const summaryLines = rawTextContent.split("\n");
-  const textContent = summaryLines.length > 0 && (
-    summaryLines[0] === "Success. Updated the following files:" ||
-    summaryLines[0] === "Partial success. Updated the following files:" ||
-    summaryLines[0] === "Failed. No files were updated:"
-  )
-    ? summaryLines.filter((line: string, index: number) => index === 0 || !/^[CEDMV] /.test(line)).join("\n").trim()
-    : rawTextContent;
+  const textContent = rawTextContent;
+  const response = result.details as ApplyResponse;
+  const successCount = response.files.filter((item) => item.status !== "rejected").length;
+  const failedCount = response.errors.length;
+  const allFailed = result.isError === true || (failedCount > 0 && successCount === 0);
+  if (allFailed) {
+    return new Text(theme.fg("error", collapseError(textContent || "Error", expanded)), 0, 0);
+  }
   if (isPartial) return new Text(theme.fg("warning", collapseError(textContent || "Applying patch...", expanded)), 0, 0);
-  const summary = result.details as ApplySummary | undefined;
-    const successCount = (summary?.created?.length ?? 0) + (summary?.edited?.length ?? 0) + (summary?.moved?.length ?? 0) + (summary?.deleted?.length ?? 0);
-  const failedCount = summary?.failed?.length ?? 0;
-  const tone = result.isError || (failedCount > 0 && successCount === 0) ? "error" : failedCount > 0 ? "warning" : "toolOutput";
+  const tone = failedCount > 0 ? "warning" : "success";
   let output = "";
   if (textContent) {
     const collapsed = collapseText(textContent, expanded);
-    output = theme.fg(tone, collapsed.text);
+    const partial = failedCount > 0 && successCount > 0;
+    output = colorizeSummary(collapsed.text, tone, theme, partial);
     if (collapsed.trimmed) {
       output += `\n${theme.fg("muted", `... (${collapsed.hidden} more lines, ${keyHint("expandTools", "to expand")})`)}`;
-    }
-  }
-  const fileDiffs = summary?.fileDiffs ?? [];
-  if (result.isError) return new Text(theme.fg("error", collapseError(textContent || "Error", expanded)), 0, 0);
-  if (fileDiffs.length > 0) {
-    const visibleFileCount = expanded ? fileDiffs.length : Math.min(fileDiffs.length, 2);
-    for (const fileDiff of fileDiffs.slice(0, visibleFileCount)) {
-      const header = fileDiff.moveFrom ? `${fileDiff.status} ${fileDiff.path} (from ${fileDiff.moveFrom})` : `${fileDiff.status} ${fileDiff.path}`;
-      if (fileDiff.status === "D" || fileDiff.diff.trim().length === 0) {
-        output += `${output ? "\n\n" : ""}${theme.fg("accent", header)}`;
-        continue;
-      }
-      const renderedDiff = renderDiff(fileDiff.diff);
-      const diffLines = renderedDiff.split("\n");
-      const visibleDiffLines = expanded ? diffLines.length : Math.min(diffLines.length, 30);
-      const shownDiff = diffLines.slice(0, visibleDiffLines).join("\n");
-      output += `${output ? "\n\n" : ""}${theme.fg("accent", header)}\n${shownDiff}`;
-      if (!expanded && diffLines.length > visibleDiffLines) {
-        output += `\n${theme.fg("muted", `... (${diffLines.length - visibleDiffLines} more diff lines, ${keyHint("expandTools", "to expand")})`)}`;
-      }
-    }
-    if (!expanded && fileDiffs.length > visibleFileCount) {
-      output += `\n\n${theme.fg("muted", `... (${fileDiffs.length - visibleFileCount} more changed files, ${keyHint("expandTools", "to expand")})`)}`;
     }
   }
   return new Text(output || theme.fg("toolOutput", "No output"), 0, 0);
