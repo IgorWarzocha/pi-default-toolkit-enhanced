@@ -2,13 +2,7 @@ import {
   BEGIN_PATCH_MARKER,
   END_PATCH_MARKER,
   END_PATCH_MARKER_LOOSE,
-  CREATE_FILE_MARKER,
-  DELETE_FILE_MARKER,
-  EDIT_FILE_MARKER,
-  MOVE_TO_MARKER,
   EOF_MARKER,
-  MOVE_FILE_MARKER,
-  CHANGE_CONTEXT_MARKER,
   EMPTY_CHANGE_CONTEXT_MARKER,
 } from "./constants.js";
 import { ensureRelativePatchPath } from "./path-utils.js";
@@ -19,7 +13,11 @@ function sanitizeAddedLine(line: string): string {
 }
 
 function parseAnchoredBody(body: string): { line: string; lineNumber: number } {
-  return { line: body, lineNumber: 0 };
+  const match = body.match(/^\s*(\d+)\s*[:|]\s?(.*)$/);
+  if (!match) return { line: body, lineNumber: 0 };
+  const lineNumber = Number.parseInt(match[1], 10);
+  const line = match[2] ?? "";
+  return { line, lineNumber: Number.isFinite(lineNumber) ? lineNumber : 0 };
 }
 
 function normalizePatchText(text: string): string {
@@ -78,6 +76,65 @@ export function parsePatch(patchText: string): Hunk[] {
   return hunks;
 }
 
+function isBeginPatch(line: string): boolean {
+  return /^(?:\*{3}|#{3})\s*Begin Patch(?:\s*(?:\*{3}|#{3}))?\s*$/i.test(line.trim());
+}
+
+function isEndPatch(line: string): boolean {
+  return /^(?:\*{3}|#{3})\s*End Patch(?:\s*(?:\*{3}|#{3}))?\s*$/i.test(line.trim());
+}
+
+function parseHeader(line: string): { kind: "create" | "edit" | "delete" | "move"; path: string } | undefined {
+  const match = line.trim().match(/^(?:(?:\*{3}|#{3})\s*)?(Create File|Create|Edit File|Edit|Delete File|Delete|Move File|Move)\s*:\s*(.+)$/i);
+  if (!match) return undefined;
+  const token = match[1].toLowerCase();
+  const path = match[2].replace(/\s*(?:\*{3}|#{3})\s*$/, "").trim();
+  if (path.length === 0) return undefined;
+  if (token === "create file" || token === "create") return { kind: "create", path };
+  if (token === "edit file" || token === "edit") return { kind: "edit", path };
+  if (token === "delete file" || token === "delete") return { kind: "delete", path };
+  return { kind: "move", path };
+}
+
+function parseMoveTo(line: string): string | undefined {
+  const match = line.trim().match(/^(?:(?:\*{3}|#{3})\s*)?Move to\s*:\s*(.+)$/i);
+  if (!match) return undefined;
+  const path = match[1].replace(/\s*(?:\*{3}|#{3})\s*$/, "").trim();
+  if (path.length === 0) return undefined;
+  return path;
+}
+
+type HunkHeaderSpec = {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  context: string;
+};
+
+function parseHunkHeaderSpec(line: string): HunkHeaderSpec | undefined {
+  const raw = line.trim();
+  const full = raw.match(/^@@\s*-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s*@@\s*(.*)$/);
+  if (!full) return undefined;
+  const oldStart = Number.parseInt(full[1], 10);
+  const oldCount = full[2] ? Number.parseInt(full[2], 10) : 1;
+  const newStart = Number.parseInt(full[3], 10);
+  const newCount = full[4] ? Number.parseInt(full[4], 10) : 1;
+  const context = full[5] ?? "";
+  return { oldStart, oldCount, newStart, newCount, context };
+}
+
+function isChangeContext(line: string): boolean {
+  return line.trim().startsWith("@@");
+}
+
+function isSectionBoundary(line: string): boolean {
+  if (isChangeContext(line)) return true;
+  if (isEndPatch(line)) return true;
+  if (parseHeader(line) !== undefined) return true;
+  return false;
+}
+
 function checkPatchBoundaries(lines: string[]): void {
   while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
     lines.pop();
@@ -100,14 +157,16 @@ function checkPatchBoundaries(lines: string[]): void {
 
   const normalizedLastLine = (lines[lastIndex] ?? "").trim();
 
-  if (firstLine !== BEGIN_PATCH_MARKER) {
+  if (!isBeginPatch(firstLine)) {
     throw new InvalidPatchError(
-      `First line MUST be '${BEGIN_PATCH_MARKER}'. Got: '${firstLine.slice(0, 80)}'.` +
-        `\nYou MUST start patchText with exactly: ${BEGIN_PATCH_MARKER}`,
+      `First line MUST be a Begin Patch marker. Got: '${firstLine.slice(0, 80)}'.` +
+        `\nYou MUST start patchText with exactly: *** Begin Patch`,
     );
   }
 
-  if (normalizedLastLine === END_PATCH_MARKER || END_PATCH_MARKER_LOOSE.test(normalizedLastLine)) {
+  lines[0] = BEGIN_PATCH_MARKER;
+
+  if (isEndPatch(normalizedLastLine) || END_PATCH_MARKER_LOOSE.test(normalizedLastLine)) {
     lines[lastIndex] = END_PATCH_MARKER;
     return;
   }
@@ -136,16 +195,25 @@ function checkPatchBoundaries(lines: string[]): void {
   }
 
   throw new InvalidPatchError(
-    `Last line MUST be '${END_PATCH_MARKER}'. Got: '${normalizedLastLine.slice(0, 80)}'.` +
-      `\nYou MUST end patchText with exactly: ${END_PATCH_MARKER}` +
+    `Last line MUST be an End Patch marker. Got: '${normalizedLastLine.slice(0, 80)}'.` +
+      `\nYou MUST end patchText with exactly: *** End Patch` +
       `\nYou MUST NOT add trailing blank lines or comments after the end marker.`,
   );
 }
 
 function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consumedLines: number } {
   const firstLine = lines[0]?.trim() ?? "";
-  if (firstLine.startsWith(CREATE_FILE_MARKER)) {
-    const filePath = firstLine.slice(CREATE_FILE_MARKER.length);
+  const header = parseHeader(firstLine);
+  if (!header && (/^(?:\*{3}|#{3})/.test(firstLine) || /^[A-Za-z]+\s*:/.test(firstLine))) {
+    throw new InvalidHunkError(
+      `Invalid file section header at line ${lineNumber}: '${firstLine.slice(0, 100)}'.`,
+      lineNumber,
+      ["*** Create File: <path>", "*** Edit File: <path>", "*** Delete File: <path>", "*** Move File: <path>"],
+      [firstLine],
+    );
+  }
+  if (header && header.kind === "create") {
+    const filePath = header.path;
     let contents = "";
     let consumedLines = 1;
 
@@ -155,8 +223,11 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
         consumedLines += 1;
         continue;
       }
-      if (addLine.startsWith("***")) break;
-      if (addLine.startsWith("@@ ") || addLine === "@@") break;
+      if (addLine.trim().startsWith("@@")) {
+        consumedLines += 1;
+        continue;
+      }
+      if (isSectionBoundary(addLine)) break;
       contents += `${addLine}\n`;
       consumedLines += 1;
     }
@@ -172,32 +243,38 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
     return { hunk: { type: "create", filePath, contents }, consumedLines };
   }
 
-  if (firstLine.startsWith(DELETE_FILE_MARKER)) {
-    const filePath = firstLine.slice(DELETE_FILE_MARKER.length);
-    return { hunk: { type: "delete", filePath }, consumedLines: 1 };
+  if (header && header.kind === "delete") {
+    const filePath = header.path;
+    let consumedLines = 1;
+    for (const next of lines.slice(1)) {
+      if (isSectionBoundary(next)) break;
+      consumedLines += 1;
+    }
+    return { hunk: { type: "delete", filePath }, consumedLines };
   }
-  if (firstLine.startsWith(MOVE_FILE_MARKER)) {
-    const filePath = firstLine.slice(MOVE_FILE_MARKER.length);
+  if (header && header.kind === "move") {
+    const filePath = header.path;
     const toLine = lines[1];
-    if (!toLine?.trim().startsWith(MOVE_TO_MARKER)) {
+    const moveToPath = toLine ? parseMoveTo(toLine) : undefined;
+    if (!moveToPath) {
       throw new InvalidHunkError(
-        `Move file for '${filePath}' MUST be followed by '${MOVE_TO_MARKER}<new-path>'.`,
+        `Move file for '${filePath}' MUST be followed by a Move to marker.`,
         lineNumber,
       );
     }
-    const moveToPath = toLine.trim().slice(MOVE_TO_MARKER.length);
     return { hunk: { type: "move", filePath, moveToPath }, consumedLines: 2 };
   }
 
-  if (firstLine.startsWith(EDIT_FILE_MARKER)) {
-    const filePath = firstLine.slice(EDIT_FILE_MARKER.length);
+  if (header && header.kind === "edit") {
+    const filePath = header.path;
     let consumedLines = 1;
     let remaining = lines.slice(1);
 
     let moveToPath: string | undefined;
     const moveLine = remaining[0];
-    if (moveLine?.startsWith(MOVE_TO_MARKER)) {
-      moveToPath = moveLine.slice(MOVE_TO_MARKER.length);
+    const parsedMoveTo = moveLine ? parseMoveTo(moveLine) : undefined;
+    if (parsedMoveTo) {
+      moveToPath = parsedMoveTo;
       consumedLines += 1;
       remaining = remaining.slice(1);
     }
@@ -209,11 +286,23 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
         remaining = remaining.slice(1);
         continue;
       }
-      if (remaining[0].startsWith("***")) break;
+      if (parseHeader(remaining[0]) !== undefined || isEndPatch(remaining[0])) break;
       const { chunk, consumedLines: consumedByChunk } = parseEditFileChunk(
         remaining,
         lineNumber + consumedLines,
       );
+      if (consumedByChunk <= 0) {
+        throw new InvalidHunkError(
+          `Edit file hunk for '${filePath}' is malformed near '${(remaining[0] ?? "").slice(0, 80)}'.` +
+            `\nYou MUST provide @@ context lines and body lines prefixed with ' ', '+', or '-'.`,
+          lineNumber + consumedLines,
+        );
+      }
+      if (chunk.oldLines.length === 0 && chunk.newLines.length === 0) {
+        consumedLines += consumedByChunk;
+        remaining = remaining.slice(consumedByChunk);
+        continue;
+      }
       chunks.push(chunk);
       consumedLines += consumedByChunk;
       remaining = remaining.slice(consumedByChunk);
@@ -230,7 +319,7 @@ function parseOneHunk(lines: string[], lineNumber: number): { hunk: Hunk; consum
   }
   throw new InvalidHunkError(
     `'${firstLine.slice(0, 100)}' is not a valid hunk header.` +
-      `\nYou MUST use one of: '${CREATE_FILE_MARKER}<path>', '${DELETE_FILE_MARKER}<path>', '${EDIT_FILE_MARKER}<path>', '${MOVE_FILE_MARKER}<path>'.` +
+      `\nYou MUST use one of: '*** Create File: <path>', '*** Delete File: <path>', '*** Edit File: <path>', '*** Move File: <path>'.` +
       `\nYou MUST NOT place content lines outside of a file section.`,
     lineNumber,
   );
@@ -250,15 +339,19 @@ function parseEditFileChunk(
   let changeContext: string | undefined;
   let startIndex: number;
   let oldStart = 0;
+  let headerSpec: HunkHeaderSpec | undefined;
 
-  if (lines[0] === EMPTY_CHANGE_CONTEXT_MARKER) {
+  const first = lines[0]?.trim() ?? "";
+
+  if (first === EMPTY_CHANGE_CONTEXT_MARKER) {
+    changeContext = "";
     startIndex = 1;
-  } else if (lines[0].startsWith(CHANGE_CONTEXT_MARKER)) {
-    const raw = lines[0];
-    const gitFull = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s*@@\s*(.*)$/);
-    if (gitFull) {
-      oldStart = Number.parseInt(gitFull[1], 10);
-      changeContext = gitFull[2];
+  } else if (isChangeContext(first)) {
+    const raw = first;
+    headerSpec = parseHunkHeaderSpec(raw);
+    if (headerSpec) {
+      oldStart = headerSpec.oldStart;
+      changeContext = headerSpec.context;
       startIndex = 1;
     } else {
       const gitOldOnly = raw.match(/^@@\s*-(\d+)(?:,\d+)?\s*@@\s*(.*)$/);
@@ -267,7 +360,16 @@ function parseEditFileChunk(
         changeContext = gitOldOnly[2];
         startIndex = 1;
       } else {
-        changeContext = raw.slice(CHANGE_CONTEXT_MARKER.length);
+        const malformed = raw.match(/^@@\s*-[^@]*$/);
+        if (malformed) {
+          throw new InvalidHunkError(
+            `Malformed hunk header at line ${lineNumber}: '${raw.slice(0, 100)}'.`,
+            lineNumber,
+            ["@@ -<oldStart>,<oldCount> +<newStart>,<newCount> @@ <context>"],
+            [raw],
+          );
+        }
+        changeContext = raw.replace(/^@@\s?/, "");
         startIndex = 1;
       }
     }
@@ -302,18 +404,18 @@ function parseEditFileChunk(
       break;
     }
 
-    if (line.startsWith("*** ")) {
+    if (isSectionBoundary(line)) {
       break;
     }
 
-    if (line === EMPTY_CHANGE_CONTEXT_MARKER || line.startsWith(CHANGE_CONTEXT_MARKER)) {
+    if (line.trim() === EMPTY_CHANGE_CONTEXT_MARKER || isChangeContext(line)) {
       if (parsedBodyLines > 0) break;
     }
 
     if (line.length === 0) {
       if (chunk.oldLines.length > 0 || chunk.newLines.length > 0) {
         const nextLine = lines[startIndex + parsedBodyLines + 1];
-        if (nextLine && nextLine.length > 0 && !nextLine.startsWith("*** ")) {
+        if (nextLine && nextLine.length > 0 && !isSectionBoundary(nextLine)) {
           chunk.newLines.push("");
           parsedBodyLines += 1;
           continue;
@@ -326,7 +428,7 @@ function parseEditFileChunk(
     if (prefix === " ") {
       const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber });
+      chunk.oldAnchors.push({ line: anchored.lineNumber, offset: lineNumber + startIndex + parsedBodyLines });
       chunk.newLines.push(anchored.line);
       parsedBodyLines += 1;
       continue;
@@ -339,19 +441,28 @@ function parseEditFileChunk(
     if (prefix === "-") {
       const anchored = parseAnchoredBody(line.slice(1));
       chunk.oldLines.push(anchored.line);
-      chunk.oldAnchors.push({ line: anchored.lineNumber });
+      chunk.oldAnchors.push({ line: anchored.lineNumber, offset: lineNumber + startIndex + parsedBodyLines });
+      parsedBodyLines += 1;
+      continue;
+    }
+
+    if (chunk.oldLines.length === 0 && chunk.changeContext !== undefined) {
+      chunk.newLines.push(line);
       parsedBodyLines += 1;
       continue;
     }
 
     if (chunk.oldLines.length === 0 && !chunk.changeContext) {
       throw new InvalidHunkError(
-        `Unexpected unprefixed line in edit hunk: '${line.slice(0, 80)}'.` +
-          `\nUnprefixed additions are allowed only after at least one context/removal line or @@ context.` +
-          `\nYou SHOULD use '+' for additions when no context/removal lines are provided.`,
+        `INVALID HUNK LINE: '${line.slice(0, 80)}'.` +
+          `\nYou MUST prefix each edit line with exactly one of: ' ' (context), '-' (removal), '+' (addition).` +
+          `\nYou MUST prefix this line with ' ' if it is context, or '+' if it is an addition.`,
         lineNumber + startIndex + parsedBodyLines + 1,
       );
     }
+
+    chunk.oldLines.push(line);
+    chunk.oldAnchors.push({ line: 0, offset: lineNumber + startIndex + parsedBodyLines });
     chunk.newLines.push(line);
     parsedBodyLines += 1;
     continue;
@@ -362,7 +473,20 @@ function parseEditFileChunk(
       chunk.oldAnchors[index].line = oldStart + index;
     }
     if (chunk.oldAnchors.length === 0) {
-      chunk.oldAnchors.push({ line: oldStart });
+      chunk.oldAnchors.push({ line: oldStart, offset: lineNumber + startIndex });
+    }
+  }
+
+  if (headerSpec) {
+    const oldCountActual = chunk.oldLines.length;
+    const newCountActual = chunk.newLines.length;
+    if (headerSpec.oldCount !== oldCountActual || headerSpec.newCount !== newCountActual) {
+      throw new InvalidHunkError(
+        `Hunk header counts are invalid at line ${lineNumber}. Expected -${headerSpec.oldCount} +${headerSpec.newCount} but parsed -${oldCountActual} +${newCountActual}.`,
+        lineNumber,
+        [`-${headerSpec.oldCount}`, `+${headerSpec.newCount}`],
+        [`-${oldCountActual}`, `+${newCountActual}`],
+      );
     }
   }
 

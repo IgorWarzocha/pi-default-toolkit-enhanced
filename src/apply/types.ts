@@ -19,15 +19,41 @@ export type EditFileChunk = {
 
 export type EditLineAnchor = {
   line: number;
+  offset: number;
 };
 
-export class InvalidPatchError extends Error {}
+export type ParseErrorCode = "PatchParseError";
+
+export class InvalidPatchError extends Error {
+  readonly code: ParseErrorCode;
+  readonly lineNumber: number;
+  readonly expected: string[];
+  readonly actual: string[];
+
+  constructor(message: string, lineNumber = 1, expected: string[] = [], actual: string[] = []) {
+    super(message);
+    this.code = "PatchParseError";
+    this.lineNumber = lineNumber;
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
 export class InvalidHunkError extends Error {
+  readonly code: ParseErrorCode;
+  readonly expected: string[];
+  readonly actual: string[];
+
   constructor(
     message: string,
     readonly lineNumber: number,
+    expected: string[] = [],
+    actual: string[] = [],
   ) {
     super(message);
+    this.code = "PatchParseError";
+    this.expected = expected;
+    this.actual = actual;
   }
 }
 
@@ -52,6 +78,8 @@ export type ApplySummary = {
 
 export type ApplyFailure = {
   path: string;
+  code?: string;
+  lineNumber?: number;
   error: string;
   expected?: string[];
   actual?: string[];

@@ -5,6 +5,7 @@ import { applyHunks } from "./index.js";
 import { renderApplyPatchCall, renderApplyPatchResult, formatSummary } from "./render.js";
 import { enrichParseError } from "./parse-recovery.js";
 import type { ApplySummary, Hunk } from "./types.js";
+import { InvalidHunkError, InvalidPatchError } from "./types.js";
 
 function isBegin(line: string): boolean {
   return /^(?:\*{3}|#{3})\s*Begin Patch(?:\s*(?:\*{3}|#{3}))?\s*$/i.test(line.trim());
@@ -193,8 +194,19 @@ export function registerApplyTool(pi: ExtensionAPI): void {
           parsed = [...parsed, ...hunks];
         } catch (error) {
           const errorMessage = await enrichParseError(ctx.cwd, section.patch, error);
-          parseFailed.failed.push({ path: section.path, error: errorMessage });
+          const lineNumber = error instanceof InvalidHunkError || error instanceof InvalidPatchError ? error.lineNumber : undefined;
+          const code = error instanceof InvalidHunkError || error instanceof InvalidPatchError ? error.code : undefined;
+          const expected = error instanceof InvalidHunkError || error instanceof InvalidPatchError ? error.expected : undefined;
+          const actual = error instanceof InvalidHunkError || error instanceof InvalidPatchError ? error.actual : undefined;
+          parseFailed.failed.push({ path: section.path, code, lineNumber, error: errorMessage, expected, actual });
         }
+      }
+      if (parseFailed.failed.length > 0) {
+        return {
+          content: [{ type: "text", text: formatSummary(parseFailed) }],
+          isError: true,
+          details: parseFailed,
+        };
       }
       if (parsed.length === 0) {
         const summary = parseFailed;

@@ -16,7 +16,7 @@ const options: HealOptions = {
 function chunk(oldLine: string, newLine: string): EditFileChunk {
   return {
     oldLines: [oldLine],
-    oldAnchors: [{ line: 2 }],
+    oldAnchors: [{ line: 2, offset: 0 }],
     newLines: [newLine],
     isEndOfFile: false,
   };
