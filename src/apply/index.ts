@@ -374,27 +374,90 @@ function upsertLive(summary: ApplySummary, pathText: string, anchors: string[]):
   summary.live.push({ path: pathText, anchors });
 }
 
+
+
+type PlannedWrite = {
+  path: string;
+  content: string;
+};
+
+type PlannedDelete = {
+  path: string;
+};
+
+type PlannedCommit = {
+  writes: PlannedWrite[];
+  deletes: PlannedDelete[];
+};
+
+async function exists(target: string): Promise<boolean> {
+  try {
+    await fs.stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function failSummary(summary: ApplySummary, hunk: Hunk, error: unknown): ApplySummary {
+  const typed = error as AnchorError;
+  const message = error instanceof Error ? error.message : String(error);
+  const failure = { path: hunk.filePath, error: message } as { path: string; error: string; expected?: string[]; actual?: string[]; suggest?: string };
+  if (typed.expected && typed.expected.length > 0) failure.expected = typed.expected;
+  if (typed.actual && typed.actual.length > 0) failure.actual = typed.actual;
+  if (typed.suggest) failure.suggest = typed.suggest;
+  summary.failed.push(failure);
+  return summary;
+}
+
+async function readOptional(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, "utf-8");
+  } catch {
+    return undefined;
+  }
+}
+
+async function rollback(writesDone: string[], deletesDone: string[], backups: Map<string, string | undefined>): Promise<void> {
+  for (let index = writesDone.length - 1; index >= 0; index--) {
+    const filePath = writesDone[index];
+    const backup = backups.get(filePath);
+    if (backup === undefined) {
+      try {
+        await fs.unlink(filePath);
+      } catch {
+      }
+      continue;
+    }
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, backup, "utf-8");
+  }
+  for (let index = deletesDone.length - 1; index >= 0; index--) {
+    const filePath = deletesDone[index];
+    const backup = backups.get(filePath);
+    if (backup === undefined) continue;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, backup, "utf-8");
+  }
+}
+
 export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySummary> {
   if (hunks.length === 0) throw new Error("No files were modified. You MUST include at least one file section in the patch.");
   const summary: ApplySummary = { created: [], edited: [], moved: [], deleted: [], failed: [], live: [], fileDiffs: [], noops: [], hunkResults: [] };
-  const filePathsInPatch = new Set<string>();
-  for (const hunk of hunks) {
-    filePathsInPatch.add(hunk.filePath);
-    if (hunk.type === "edit" && hunk.moveToPath) filePathsInPatch.add(hunk.moveToPath);
-    if (hunk.type === "move" && hunk.moveToPath) filePathsInPatch.add(hunk.moveToPath);
-  }
+  const commit: PlannedCommit = { writes: [], deletes: [] };
+  const scheduledWrite = new Set<string>();
+  const scheduledDelete = new Set<string>();
+
   for (const hunk of hunks) {
     try {
       if (hunk.type === "create") {
         const target = resolvePatchPath(cwd, hunk.filePath);
-        let exists = false;
-        try {
-          await fs.stat(target);
-          exists = true;
-        } catch {}
-        if (exists) throw new Error(`CONFLICT: File already exists: ${hunk.filePath}` + `\n\nREQUIREMENT: You MUST NOT use Create File to overwrite existing files.` + `\n\nACTION REQUIRED:` + `\n1. If you need to edit the file: Use Edit File instead` + `\n2. If you need full replacement: Use Delete File + Create File in ONE patch` + `\n   - Place Delete File before Create File` + `\n   - Both operations MUST be in the same apply_patch call`);
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, hunk.contents, "utf-8");
+        if (await exists(target)) {
+          throw new Error(`CONFLICT: File already exists: ${hunk.filePath}` + `\n\nREQUIREMENT: You MUST NOT use Create File to overwrite existing files.`);
+        }
+        if (scheduledWrite.has(target)) throw new Error(`CONFLICT: Multiple writes target '${hunk.filePath}'.`);
+        scheduledWrite.add(target);
+        commit.writes.push({ path: target, content: hunk.contents });
         summary.created.push(hunk.filePath);
         summary.fileDiffs.push({ status: "C", path: hunk.filePath, diff: buildNumberedDiff("", hunk.contents) });
         upsertLive(summary, hunk.filePath, anchorsFromContent(hunk.contents));
@@ -402,85 +465,97 @@ export async function applyHunks(cwd: string, hunks: Hunk[]): Promise<ApplySumma
       }
       if (hunk.type === "delete") {
         const target = resolvePatchPath(cwd, hunk.filePath);
-        await fs.readFile(target, "utf-8");
-        await fs.unlink(target);
+        const content = await readOptional(target);
+        if (content === undefined) throw new Error(`CONFLICT: Delete source missing: ${hunk.filePath}`);
+        if (scheduledDelete.has(target)) throw new Error(`CONFLICT: Duplicate delete target '${hunk.filePath}'.`);
+        scheduledDelete.add(target);
+        commit.deletes.push({ path: target });
         summary.deleted.push(hunk.filePath);
         summary.fileDiffs.push({ status: "D", path: hunk.filePath, diff: "" });
         continue;
       }
       if (hunk.type === "move") {
         const source = resolvePatchPath(cwd, hunk.filePath);
-        const originalContent = await fs.readFile(source, "utf-8");
         const destination = resolvePatchPath(cwd, hunk.moveToPath);
-        let destExists = false;
-        try {
-          await fs.stat(destination);
-          destExists = true;
-        } catch {}
-        if (destExists) throw new Error(`CONFLICT: Move destination already exists: ${hunk.moveToPath}` + `\n\nACTION REQUIRED: Delete the destination file before moving, or use Edit File if you intend to merge.`);
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.writeFile(destination, originalContent, "utf-8");
-        try {
-          await fs.unlink(source);
-        } catch (error) {
-          await fs.unlink(destination);
-          throw error;
+        const sourceContent = await readOptional(source);
+        if (sourceContent === undefined) throw new Error(`CONFLICT: Move source missing: ${hunk.filePath}`);
+        const destinationExists = await exists(destination);
+        if (destinationExists && !scheduledDelete.has(destination)) {
+          throw new Error(`CONFLICT: Move destination already exists: ${hunk.moveToPath}`);
         }
+        if (scheduledWrite.has(destination)) throw new Error(`CONFLICT: Multiple writes target '${hunk.moveToPath}'.`);
+        if (scheduledDelete.has(source)) throw new Error(`CONFLICT: Move source already scheduled for delete: ${hunk.filePath}`);
+        scheduledWrite.add(destination);
+        scheduledDelete.add(source);
+        commit.writes.push({ path: destination, content: sourceContent });
+        commit.deletes.push({ path: source });
         summary.moved.push(hunk.moveToPath);
         summary.fileDiffs.push({ status: "MV", path: hunk.moveToPath, moveFrom: hunk.filePath, diff: "" });
-        upsertLive(summary, hunk.moveToPath, anchorsFromContent(originalContent));
+        upsertLive(summary, hunk.moveToPath, anchorsFromContent(sourceContent));
         continue;
       }
+
       const source = resolvePatchPath(cwd, hunk.filePath);
-      const originalContent = await fs.readFile(source, "utf-8");
+      const originalContent = await readOptional(source);
+      if (originalContent === undefined) throw new Error(`CONFLICT: Edit source missing: ${hunk.filePath}`);
       const next = await deriveUpdatedContentWithHealing(originalContent, source, hunk.chunks, summary.noops, summary.hunkResults, DEFAULT_HEAL_OPTIONS);
       const diff = buildNumberedDiff(originalContent, next.content);
+
       if (hunk.moveToPath) {
         const destination = resolvePatchPath(cwd, hunk.moveToPath);
-        let destExists = false;
-        try {
-          await fs.stat(destination);
-          destExists = true;
-        } catch {}
-        if (destExists) throw new Error(`CONFLICT: Edit destination already exists: ${hunk.moveToPath}` + `\n\nACTION REQUIRED: Delete the destination file before moving/editing, or edit the existing file directly.`);
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.writeFile(destination, next.content, "utf-8");
-        try {
-          await fs.unlink(source);
-        } catch (error) {
-          await fs.unlink(destination);
-          throw error;
+        const destinationExists = await exists(destination);
+        if (destinationExists && !scheduledDelete.has(destination)) {
+          throw new Error(`CONFLICT: Edit destination already exists: ${hunk.moveToPath}`);
         }
+        if (scheduledWrite.has(destination)) throw new Error(`CONFLICT: Multiple writes target '${hunk.moveToPath}'.`);
+        if (scheduledDelete.has(source)) throw new Error(`CONFLICT: Edit source already scheduled for delete: ${hunk.filePath}`);
+        scheduledWrite.add(destination);
+        scheduledDelete.add(source);
+        commit.writes.push({ path: destination, content: next.content });
+        commit.deletes.push({ path: source });
         summary.edited.push(hunk.moveToPath);
         summary.fileDiffs.push({ status: "E", path: hunk.moveToPath, moveFrom: hunk.filePath, diff });
         upsertLive(summary, hunk.moveToPath, next.anchors);
         continue;
       }
-      await fs.writeFile(source, next.content, "utf-8");
+
+      if (scheduledWrite.has(source)) throw new Error(`CONFLICT: Multiple writes target '${hunk.filePath}'.`);
+      scheduledWrite.add(source);
+      commit.writes.push({ path: source, content: next.content });
       summary.edited.push(hunk.filePath);
       summary.fileDiffs.push({ status: "E", path: hunk.filePath, diff });
       upsertLive(summary, hunk.filePath, next.anchors);
     } catch (error) {
-      const typed = error as AnchorError;
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = { path: hunk.filePath, error: message } as { path: string; error: string; expected?: string[]; actual?: string[]; suggest?: string };
-      if (typed.expected && typed.expected.length > 0) failure.expected = typed.expected;
-      if (typed.actual && typed.actual.length > 0) failure.actual = typed.actual;
-      if (typed.suggest) failure.suggest = typed.suggest;
-      summary.failed.push(failure);
+      return failSummary(summary, hunk, error);
     }
   }
-  if (summary.failed.length > 0) {
-    for (const filePath of filePathsInPatch) {
-      const isLive = summary.live.some((l) => l.path === filePath);
-      if (!isLive) {
-        try {
-          const absolutePath = resolvePatchPath(cwd, filePath);
-          const content = await fs.readFile(absolutePath, "utf-8");
-          upsertLive(summary, filePath, anchorsFromContent(content));
-        } catch {}
-      }
-    }
+
+  const backups = new Map<string, string | undefined>();
+  const touched = new Set<string>();
+  for (const op of commit.writes) touched.add(op.path);
+  for (const op of commit.deletes) touched.add(op.path);
+  for (const filePath of touched) {
+    backups.set(filePath, await readOptional(filePath));
   }
+
+  const writesDone: string[] = [];
+  const deletesDone: string[] = [];
+  try {
+    for (const op of commit.writes) {
+      await fs.mkdir(path.dirname(op.path), { recursive: true });
+      await fs.writeFile(op.path, op.content, "utf-8");
+      writesDone.push(op.path);
+    }
+    for (const op of commit.deletes) {
+      if (!(await exists(op.path))) continue;
+      await fs.unlink(op.path);
+      deletesDone.push(op.path);
+    }
+  } catch (error) {
+    await rollback(writesDone, deletesDone, backups);
+    const message = error instanceof Error ? error.message : String(error);
+    summary.failed.push({ path: "<commit>", error: `TransactionError: ${message}` });
+  }
+
   return summary;
 }
